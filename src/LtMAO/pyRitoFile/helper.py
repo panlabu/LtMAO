@@ -1,3 +1,15 @@
+def hash_elf():
+    pass
+
+def matrix_multiply():
+    pass
+
+def matrix_inverse():
+    pass
+
+def matrix_decompose():
+    pass
+
 
 def Elf(s):
     h = 0

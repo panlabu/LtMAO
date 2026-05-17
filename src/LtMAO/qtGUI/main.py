@@ -351,7 +351,7 @@ def build_mid_content():
         content_widget.setVisible(False)
         c.content = content_widget  
         layout.addWidget(content_widget, stretch=99)
-        print('qtGUI: Finish: Build {c.name  }.')
+        print(f'qtGUI: Finish: Build {c.name}.')
     control_layout.addStretch()
 
     print('qtGUI: Finish: Build mid content.')

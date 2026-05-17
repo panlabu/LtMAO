@@ -46,7 +46,8 @@ from .. import (
     wiwawe,
     lepath,
     bumpath,
-    infinityQT
+    infinityQT,
+    mandown
 )
 from ..lemon3d import lemon_fbx, lemon_maya
 
@@ -92,7 +93,8 @@ all = [
     Control('🔊\nbnk_tool', 10, lambda widget: build_bnk_tool(widget)),
     Control('📼\nwiwawe', 11, lambda widget: build_wiwawe(widget)),
     Control('♾️\ninfinityQT', 12, lambda widget: build_infinityQT(widget)),
-    Control('🪟\nwinLT', 13, lambda widget: build_winLT(widget)),
+    Control('🌐\nmandown', 13, lambda widget: build_mandown(widget)),
+    Control('🪟\nwinLT', 14, lambda widget: build_winLT(widget)),
 ]
 
 def build_cslmao(widget: QWidget):
@@ -3067,6 +3069,7 @@ def build_winLT(widget: QWidget):
     layout2 = QHBoxLayout()
     treewidget = QTreeWidget()
     treewidget.setHeaderHidden(True)
+    treewidget.setAutoScroll(False)
     treewidget.setSelectionMode(treewidget.SelectionMode.SingleSelection)
     for shell_id in winLT.submenus:
         shell_item = QTreeWidgetItem(treewidget)
@@ -3099,6 +3102,186 @@ def build_winLT(widget: QWidget):
 
     layout.addStretch()
     widget.setLayout(layout)
+
+def build_mandown(widget: QWidget):
+    layout = QVBoxLayout()
+    
+    layout2 = QHBoxLayout()
+    layout2.setSpacing(30)
+    layout.addLayout(layout2)
+
+    # region
+    layout2.addWidget(QLabel('🌍 Region:'))
+    region_combobox = QComboBox()
+    region_combobox.setMinimumWidth(100)
+    layout2.addWidget(region_combobox)
+    # patch
+    layout2.addWidget(QLabel('🧩 Patch:'))
+    patch_combobox = QComboBox()
+    patch_combobox.setMinimumWidth(300)
+    layout2.addWidget(patch_combobox)
+    # parse button
+    parse_button = QToolButton()
+    parse_button.setText('🧐 Parse')
+    parse_button.setMinimumWidth(130)
+    layout2.addWidget(parse_button)
+
+
+    layout3 = QHBoxLayout()
+    layout.addLayout(layout3)
+
+    # select all
+    select_all_button = QToolButton()
+    select_all_button.setText('🟩 Select all')
+    layout3.addWidget(select_all_button)
+    # deselect all
+    deselect_all_button = QToolButton()
+    deselect_all_button.setText('🟥 Deselect all')
+    layout3.addWidget(deselect_all_button)
+    # select langs
+    select_langs_button = QToolButton()
+    select_langs_button.setText('🟦 Select langs')
+    layout3.addWidget(select_langs_button)
+    # deselect langs
+    deselect_langs_button = QToolButton()
+    deselect_langs_button.setText('🟨 Deselect langs')
+    layout3.addWidget(deselect_langs_button)
+    # filter
+    filter_line = QLineEdit()
+    filter_line.setPlaceholderText('🔎 Filter')
+    layout3.addWidget(filter_line)
+    # select with filter
+    select_filter = QToolButton()
+    select_filter.setText('🟪 Select filter')
+    layout3.addWidget(select_filter)
+
+    # treewidget
+    treewidget = QTreeWidget()
+    treewidget.setHeaderHidden(True)
+    treewidget.setAutoScroll(False)
+    treewidget.setSelectionMode(treewidget.SelectionMode.SingleSelection)
+    treewidget.expandAll()
+    layout.addWidget(treewidget, stretch=1)
+    treewidget.parsed_mandown = None
+
+    layout4 = QHBoxLayout()
+    layout.addLayout(layout4)
+    
+    # open cache button
+    cache_button = QToolButton()
+    cache_button.setText('📁 Open cache')
+    cache_button.setMinimumWidth(200)
+    cache_button.clicked.connect(lambda: os.startfile(lepath.abs(mandown.cache_dir)))
+    layout4.addWidget(cache_button)
+    layout4.addStretch()
+    # download button
+    download_button = QToolButton()
+    download_button.setText('📥 Download selected')
+    download_button.setMinimumWidth(200)
+    layout4.addWidget(download_button)
+
+    # change region
+    def change_region():
+        patch_combobox.clear()
+        patch_combobox.addItems(reversed(mandown.loaded[region_combobox.currentText()]))
+    region_combobox.currentTextChanged.connect(change_region)
+
+    # parse
+    def parse_cmd():
+        # read ma
+        treewidget.parsed_mandown = parsed_mandown = mandown.Mandown(region_combobox.currentText(), patch_combobox.currentText())
+        treewidgetsafe.build_tree(parsed_mandown)
+
+    def checkbox_changed(checked, root_item):
+        for i in range(root_item.childCount()):
+            child_item = root_item.child(i)
+            treewidget.itemWidget(child_item, 0).setChecked(checked)
+            checkbox_changed(checked, child_item)
+
+    # dispay tree
+    def build_tree(parsed_mandown):
+        # display
+        treewidget.clear()
+        dir_items = {} 
+        for dir_id in parsed_mandown.dir_dict:
+            dir_item = QTreeWidgetItem(treewidget.invisibleRootItem() if dir_id == 0 else dir_items[parsed_mandown.dir_dict[dir_id][1]])
+            checkbox = QCheckBox()
+            checkbox.setText(f'📁 {parsed_mandown.dir_dict[dir_id][0]} 🆔 {dir_id}')
+            checkbox.clicked.connect(lambda checked, root_item=dir_item: checkbox_changed(checked, root_item))
+            treewidget.setItemWidget(dir_item, 0, checkbox)
+            dir_items[dir_id] = dir_item
+        for file_id in parsed_mandown.file_dict:
+            file_item = QTreeWidgetItem(dir_items[parsed_mandown.file_dict[file_id][1]])
+            checkbox = QCheckBox()
+            checkbox.setText(f'📄 {parsed_mandown.file_dict[file_id][0]} 🆔 {file_id}')
+            treewidget.setItemWidget(file_item, 0, checkbox)
+        treewidget.expandAll()
+
+    # for thread safe
+    class TreeWidgetSafe(QObject):
+        signal = Signal(object)
+
+        def __init__(self, treewidget):
+            QObject.__init__(self)
+            self.signal.connect(build_tree)
+        
+        def build_tree(self, parsed_mandown):
+            self.signal.emit(parsed_mandown)
+    treewidgetsafe = TreeWidgetSafe(treewidget)
+    parse_button.clicked.connect(lambda: helper.SafeThread.start('mandown', parse_cmd))
+
+    # selects
+    def select(root_item, checked, langs, filter):
+         for i in range(root_item.childCount()):
+            child_item = root_item.child(i)
+            checkbox = treewidget.itemWidget(child_item, 0)
+            checkbox_text = checkbox.text()
+            if langs and '_' in checkbox_text and '.wad' in checkbox_text:
+                checkbox.setChecked(checked)
+            elif filter != None and filter in checkbox.text().lower():
+                checkbox.setChecked(checked)
+            elif not langs and filter == None:
+                checkbox.setChecked(checked)
+            select(child_item, checked, langs, filter)
+            
+    select_all_button.clicked.connect(lambda: select(treewidget.invisibleRootItem(), True, False, None))
+    deselect_all_button.clicked.connect(lambda: select(treewidget.invisibleRootItem(), False, False, None))
+    select_langs_button.clicked.connect(lambda: select(treewidget.invisibleRootItem(), True, True, None))
+    deselect_langs_button.clicked.connect(lambda: select(treewidget.invisibleRootItem(), False, True, None))
+    select_filter.clicked.connect(lambda: select(treewidget.invisibleRootItem(), True, False, filter_line.text()))
+
+    # download
+    def download_files():
+        if treewidget.parsed_mandown == None:
+            return
+        dialog = QFileDialog()
+        output_dir = dialog.getExistingDirectory(
+            widget,
+            f'Select Output Folder',
+            setting.get('qtGUI.default_folder', ''),
+        ).replace('/', '\\')
+        if output_dir != '':
+            # get all check files
+            file_ids = []
+            def checked_items(root_item):
+                for i in range(root_item.childCount()):
+                    child_item = root_item.child(i)
+                    checkbox = treewidget.itemWidget(child_item, 0)
+                    checkbox_text = checkbox.text()
+                    if checkbox.isChecked() and checkbox_text.startswith('📄'):
+                        file_ids.append(int(checkbox.text().split(' 🆔 ')[-1]))
+                    checked_items(child_item)
+            checked_items(treewidget.invisibleRootItem())
+            helper.SafeThread.start('mandown', lambda: treewidget.parsed_mandown.download(file_ids, output_dir))
+            
+    download_button.clicked.connect(download_files)
+
+    # init mandown
+    helper.SafeThread.start('init_mandown', lambda: mandown.init(region_combobox))
+
+    layout2.addStretch()
+    layout.addStretch()
+    widget.setLayout(layout)    
     
 def build_infinityQT(widget: QWidget):
     layout = QVBoxLayout()

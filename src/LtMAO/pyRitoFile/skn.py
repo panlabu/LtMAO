@@ -1,191 +1,187 @@
-from .stream import BytesStream
-from .helper import FNV1a
-from enum import Enum
+from io import BytesIO
+from dataclasses import dataclass
+from struct import unpack, iter_unpack, pack
 
-def bin_hash(name):
-    return f'{FNV1a(name):08x}'
+@dataclass(slots=True)
+class Vertex:
+    position: tuple[float, float, float]
+    influences: tuple[int, int, int, int]
+    weights: tuple[float, float, float, float]
+    normal: tuple[float, float, float]
+    uv: tuple[float, float]
+    color: tuple[int, int, int, int]
+    tangent: tuple[float, float, float, float] 
 
+@dataclass(slots=True)
+class Submesh:
+    name: str
+    vertex_start: int
+    vertex_count: int 
+    index_start: int
+    index_count: int 
 
-class SKNVertexType(Enum):
-    BASIC = 0
-    COLOR = 1
-    TANGENT = 2
+@dataclass(slots=True)
+class Skin:
+    signature: str
+    version: tuple[int, int] 
+    flags: int
+    bounding_box: tuple[
+        tuple[float, float, float], # min
+        tuple[float, float, float]  # max
+    ]
+    bounding_sphere: tuple[
+        tuple[float, float, float], # central
+        float # distance
+    ] 
+    vertex_type: int 
+    vertex_size: int
+    submeshes: list[Submesh] 
+    indices: list[int] 
+    vertices: list[Vertex] 
 
-    def __json__(self):
-        return self.name
+def read(path):
+    stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
+    with stream as bs:
+        # init some default values
+        flags = None
+        bouding_box = None
+        bouding_sphere = None
+        vertex_type = 0
+        vertex_size = 52
+        vertex_format = '3f4B4f3f2f'
 
+        # header
+        signature, major, minor = unpack('<IHH', bs.read(8))
+        if signature != 0x00112233:
+            raise Exception(
+                f'pyRitoFile: Error: Read SKN {path}: Wrong signature file: {hex(signature)}')
+        if major not in (0, 2, 4) and minor != 1:
+            raise Exception(
+                f'pyRitoFile: Error: Read SKN {path}: Unsupported file version: {major}.{minor}')
 
-class SKNVertex:
-    __slots__ = (
-        'position', 'influences', 'weights', 'normal', 'uv',
-        'color', 'tangent'
+        # rest of file
+        if major == 0:
+            index_count, vertex_count = unpack('<II', bs.read(8))
+            # create a simple submesh for version
+            submeshes = [
+                Submesh(
+                    'Base', 
+                    0,
+                    vertex_count,
+                    0,
+                    index_count
+                )
+            ]
+        else:
+            # submeshes
+            submesh_count, = unpack('<I', bs.read(4))
+            submeshes = [
+                Submesh(
+                    name.rstrip(b'\x00').decode(), # strip trailing null bytes 
+                    vertex_start,
+                    vertex_count,
+                    index_start,
+                    index_count
+                )
+                for name, vertex_start, vertex_count, index_start, index_count in iter_unpack('<64s4I', bs.read(submesh_count*80))
+            ]
+
+            if major == 4:
+                flags, = unpack('<I', bs.read(4))
+
+            index_count, vertex_count = unpack('<II', bs.read(8))
+            # prepare vertex info
+            if major == 4:
+                vertex_size, vertex_type = unpack('<II', bs.read(8))
+                if vertex_type > 0:
+                    vertex_format += '4B'
+                if vertex_type > 1:
+                    vertex_format += '4f'
+                if vertex_type > 2:
+                    raise Exception(f'pyRitoFile: Error: Read SKN {path}: Unknown vertex_type: {vertex_type}')
+                
+                # read bounding 
+                unpacked_floats = unpack('<10f', bs.read(40))
+                bounding_box = (
+                    unpacked_floats[0:2],
+                    unpacked_floats[3:5]
+                )
+                bounding_sphere = (
+                    unpacked_floats[6:8],
+                    unpacked_floats[9]
+                )
+
+        # indices
+        if index_count % 3 > 0:
+            raise Exception(f'pyRitoFile: Error: Read SKN {path}: Indices length is not divisible by 3: {index_count}')
+        indices = [
+            index
+            for a, b, c in iter_unpack('<3H', bs.read(index_count*2)) # read 3 indices as tuple
+            for index in (a, b, c) # flatten tuple
+            if a != b and b != c and c != a # only keep them if they are 3 distinct index that form a triangle
+        ]
+
+        # vertices
+        vertices = [
+            Vertex(
+                # always: position, influences, weights, normal, uv
+                unpacked_items[0:2],
+                unpacked_items[3:6],
+                unpacked_items[7:10],
+                unpacked_items[11:13],
+                unpacked_items[14:15],
+                # depend: color, tangent
+                unpacked_items[16:19] if vertex_type > 0 else None,
+                unpacked_items[20:23] if vertex_type > 1 else None
+            )
+            for unpacked_items in iter_unpack(vertex_format, bs.read(vertex_size*vertex_count))
+        ]
+
+    return Skin(
+        hex(signature),
+        (major, minor), #version
+        flags, 
+        bounding_box,
+        bounding_sphere,
+        vertex_type,
+        vertex_size,
+        submeshes,
+        indices,
+        vertices
     )
 
-    def __init__(self, position=None, influences=None, weights=None, normal=None, uv=None, color=None, tangent=None):
-        self.position = position
-        self.influences = influences
-        self.weights = weights
-        self.normal = normal
-        self.uv = uv
-        self.color = color
-        self.tangent = tangent
 
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
+def write(skin, path=None):
+    stream = BytesIO() if path == None else open(path, 'wb')
+    with stream as bs:
+        # header
+        bs.write(pack('<IHH', 0x00112233, 1, 1))
+        # submeshes
+        bs.write(pack('<I', len(skin.submeshes)))
+        bs.write(b''.join(
+            pack('<64s4I',
+                 submesh.name.encode(),
+                 submesh.vertex_start,
+                 submesh.vertex_count,
+                 submesh.index_start,
+                 submesh.index_count
+            )
+            for submesh in skin.submeshes
+        ))
+        # count
+        bs.write(pack('<II', len(skin.indices), len(skin.vertices)))
+        # indices 
+        bs.write(pack(f'{len(skin.indices)}H', *skin.indices))
+        # vertices
+        bs.write(b''.join(
+            pack('3f4B4f3f2f',
+                 *vertex.position,
+                 *vertex.influences,
+                 *vertex.weights,
+                 *vertex.normal,
+                 *vertex.uv
+            )
+            for vertex in skin.vertices
+        ))
 
-
-class SKNSubmesh:
-    __slots__ = (
-        'name', 'bin_hash',
-        'vertex_start', 'vertex_count', 'index_start', 'index_count'
-    )
-
-    def __init__(self, name=None, bin_hash=None, vertex_start=None, vertex_count=None, index_start=None, index_count=None):
-        self.name = name
-        self.bin_hash = bin_hash
-        self.vertex_start = vertex_start
-        self.vertex_count = vertex_count
-        self.index_start = index_start
-        self.index_count = index_count
-
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
-
-
-class SKN:
-    __slots__ = (
-        'signature', 'version', 'flags',
-        'bounding_box', 'bounding_sphere', 'vertex_type', 'vertex_size',
-        'submeshes', 'indices', 'vertices'
-    )
-
-    def __init__(self, signature=None, version=None, flags=None, bounding_box=None, bounding_sphere=None, vertex_type=None, vertex_size=None, submeshes=None, indices=None, vertices=None):
-        self.signature = signature
-        self.version = version
-        self.flags = flags
-        self.bounding_box = bounding_box
-        self.bounding_sphere = bounding_sphere
-        self.vertex_type = vertex_type
-        self.vertex_size = vertex_size
-        self.submeshes = submeshes
-        self.indices = indices
-        self.vertices = vertices
-
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
-
-    def read(self, path, raw=False):
-        with BytesStream.reader(path, raw) as bs:
-            self.signature, = bs.read_u32()
-            if self.signature != 0x00112233:
-                raise Exception(
-                    f'pyRitoFile: Error: Read SKN {path}: Wrong signature file: {hex(self.signature)}')
-            self.signature = hex(self.signature)
-
-            major, minor = bs.read_u16(2)
-            self.version = float(f'{major}.{minor}')
-            if major not in (0, 2, 4) and minor != 1:
-                raise Exception(
-                    f'pyRitoFile: Error: Read SKN {path}: Unsupported file version: {major}.{minor}')
-            
-            if major == 0:
-                # version 0 doesn't have submesh data
-                index_count, vertex_count = bs.read_u32(2)
-
-                submesh = SKNSubmesh()
-                submesh.name = 'Base'
-                submesh.bin_hash = bin_hash(submesh.name)
-                submesh.vertex_start = 0
-                submesh.vertex_count = vertex_count
-                submesh.index_start = 0
-                submesh.index_count = index_count
-                self.submeshes = [submesh]
-            else:
-                # read submeshes
-                submesh_count, = bs.read_u32()
-                self.submeshes = [SKNSubmesh() for i in range(submesh_count)]
-                for submesh in self.submeshes:
-                    submesh.name, = bs.read_s_padded(64)
-                    submesh.bin_hash = bin_hash(submesh.name)
-                    submesh.vertex_start, submesh.vertex_count, submesh.index_start, submesh.index_count = bs.read_u32(
-                        4)
-
-                if major == 4:
-                    self.flags, = bs.read_u32()
-
-                index_count, vertex_count = bs.read_u32(2)
-                if major == 4:
-                    self.vertex_size, = bs.read_u32()
-                    self.vertex_type, = bs.read_u32()
-                    if not self.vertex_type in (0, 1, 2):
-                        raise Exception(f'pyRitoFile: Error: Read SKN {path}: Invalid vertex_type: {self.vertex_type}')
-                    self.vertex_type = SKNVertexType(self.vertex_type)
-                    self.bounding_box = (bs.read_vec3()[0], bs.read_vec3()[0])
-                    self.bounding_sphere = (
-                        bs.read_vec3()[0], bs.read_f32()[0])
-                    
-            if index_count % 3 > 0:
-                raise Exception(f'pyRitoFile: Error: Read SKN {path}: Bad indices data: {index_count}')
-
-            # read unique indices
-            indices = bs.read_u16(index_count)
-            self.indices = []
-            for i in range(0, index_count, 3):
-                if indices[i] == indices[i+1] or indices[i+1] == indices[i+2] or indices[i+2] == indices[i]:
-                    continue
-                self.indices.extend(
-                    (indices[i], indices[i+1], indices[i+2]))
-
-            # read vertices
-            self.vertices = [SKNVertex() for i in range(vertex_count)]
-            for vertex in self.vertices:
-                vertex.position, = bs.read_vec3()
-                vertex.influences = bs.read_u8(4)
-                vertex.weights = bs.read_f32(4)
-                vertex.normal, = bs.read_vec3()
-                vertex.uv, = bs.read_vec2()
-                if self.vertex_type in (SKNVertexType.COLOR, SKNVertexType.TANGENT):
-                    vertex.color = bs.read_u8(4)
-                    if self.vertex_type == SKNVertexType.TANGENT:
-                        vertex.tangent, = bs.read_vec4()
-
-            return self
-        
-    def write(self, path, raw=False):
-        with BytesStream.writer(path, raw) as bs:
-            # magic, version
-            bs.write_u32(0x00112233)
-            if self.version != None and self.version >= 4:
-                bs.write_u16(4, 1)
-            else:
-                bs.write_u16(1, 1)
-                self.version = 1.1
-            # submesh
-            bs.write_u32(len(self.submeshes))
-            for submesh in self.submeshes:
-                bs.write_s_padded(submesh.name, 64)
-                bs.write_u32(
-                    submesh.vertex_start, submesh.vertex_count, submesh.index_start, submesh.index_count)
-            if self.version >= 4:
-                bs.write_u32(self.flags)
-            # stuffs
-            bs.write_u32(len(self.indices), len(self.vertices))
-            if self.version >= 4:
-                bs.write_u32(self.vertex_size, self.vertex_type.value)
-                bs.write_vec3(*self.bounding_box)
-                bs.write_vec3(self.bounding_sphere[0])
-                bs.write_f32(self.bounding_sphere[1])
-             # indices vertices
-            bs.write_u16(*self.indices)
-            for vertex in self.vertices:
-                bs.write_vec3(vertex.position)
-                bs.write_u8(*vertex.influences)
-                bs.write_f32(*vertex.weights)
-                bs.write_vec3(vertex.normal)
-                bs.write_vec2(vertex.uv)
-                if self.vertex_type in (SKNVertexType.COLOR, SKNVertexType.TANGENT):
-                    bs.write_u8(*vertex.color)
-                    if self.vertex_type == SKNVertexType.TANGENT:
-                        bs.write_vec4(vertex.tangent)
-
-            return bs.raw() if raw else None
+    return stream.getvalue() if path == None else None
