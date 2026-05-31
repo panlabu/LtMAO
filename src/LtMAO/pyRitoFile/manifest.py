@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from io import BytesIO
-from struct import pack, unpack
-from functools import lru_cache
+from struct import unpack
 
 # not safe because external modules
 try: 
@@ -11,7 +10,7 @@ except:
 
 @dataclass(slots=True)
 class Manifest:
-    signature: str 
+    signature: bytes 
     version: tuple[int, int]
     flags: int
     manifest_id: int
@@ -21,10 +20,10 @@ def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
         # header
-        signature = bs.read(4).decode()
-        if signature != 'RMAN':
+        signature = bs.read(4)
+        if signature != b'RMAN':
             raise Exception(f'pyRitoFile: Error: Read MANIFEST {path}: Wrong signature file: {signature}')
-        major, minor = bs.read(2)
+        major, minor = unpack('<BB', bs.read(2))
         if major != 2:
             raise Exception(f'pyRitoFile: Error: Read MANIFEST {path}: Unsupported file version: {major}.{minor}')
         
