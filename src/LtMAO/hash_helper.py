@@ -2,436 +2,311 @@ try:
     import requests
 except: 
     print('Warning: hash_helper failed to import requests.')
-import os, json, traceback, threading
+import os, json, traceback, threading, shutil
 from . import lepath, pyRitoFile, setting
 
-def get_hash_separator(filename):
-    # space separator in hashes txt
-    # use this to skip using split()
-    return 16 if filename in WAD_HASHES else 8
+hashtable = {}
+local_dir = r'.\pref\hashes'
+local_cdtb = rf'{local_dir}\cdtb'
+local_extracted = rf'{local_dir}\extracted'
 
+bsl1, bsl2 = slice(8), slice(9, -1)
+bfilehashes = (
+    (rf'{local_cdtb}\hashes.binentries.txt', bsl1, bsl2),
+    (rf'{local_cdtb}\hashes.binhashes.txt', bsl1, bsl2),
+    (rf'{local_cdtb}\hashes.bintypes.txt', bsl1, bsl2),
+    (rf'{local_cdtb}\hashes.binfields.txt', bsl1, bsl2),
+    (rf'{local_extracted}\hashes.binentries.txt', bsl1, bsl2),
+    (rf'{local_extracted}\hashes.binhashes.txt', bsl1, bsl2)
+)
+wsl1, wsl2 = slice(16), slice(17, -1)
+wfilehashes = (
+    (rf'{local_cdtb}\hashes.game.txt', wsl1, wsl2),
+    (rf'{local_cdtb}\hashes.lcu.txt', wsl1, wsl2),
+    (rf'{local_extracted}\hashes.game.txt', wsl1, wsl2)
+)
 
-def to_human(size): return str(size >> ((max(size.bit_length()-1, 0)//10)*10)) + \
-    ["", " KB", " MB", " GB", " TB", " PB",
-        " EB"][max(size.bit_length()-1, 0)//10]
+def read_hash(hashes, fh, sl1, sl2):
+    if lepath.exists(fh):
+        i = int
+        with open(fh, 'r', encoding='ascii') as f:
+            for line in f:
+                hashes[i(line[sl1], 16)] = line[sl2]
 
-class Bin_Hashes(dict):
+def write_hash(hashes, fh, fmhex):
+    with open(fh, 'w+') as f:
+        for k, v in sorted(hashes.items(), key=lambda x: x[1]):
+            f.write(f'{k:0{fmhex}x} {v}\n')
+
+def read_hashes(read_bin, read_wad):
+    fhs = []
+    h = hashtable
+    i = int
+    if read_bin:
+        fhs += bfilehashes
+    if read_wad:
+        fhs += wfilehashes
+    for fh, sl1, sl2 in fhs:
+        if lepath.exists(fh):
+            with open(fh, 'r', encoding='ascii') as f:
+                for line in f:
+                    h[i(line[sl1], 16)] = line[sl2]
+
+def free_hashes():
+    global hashtable
+    hashtable = {}
+
+def humansize(nbytes):
+    if nbytes < 1024:
+        return f"{nbytes} B"  
+    if nbytes < 1048576:        
+        return f"{f'{nbytes/1024:.2f}'.rstrip('0').rstrip('.')} KB"
+    if nbytes < 1073741824:      
+        return f"{f'{nbytes/1048576:.2f}'.rstrip('0').rstrip('.')} MB"
+    return f"{f'{nbytes/1073741824:.2f}'.rstrip('0').rstrip('.')} GB"
+
+def total_size(path):
+    return humansize(sum(map(lepath.getsize, lepath.walk(path, lambda f: f))))
+
+local_etag = rf'{local_dir}\etags.json'
+local_filehashes = (
+    rf'{local_cdtb}\hashes.binentries.txt',
+    rf'{local_cdtb}\hashes.binhashes.txt',
+    rf'{local_cdtb}\hashes.bintypes.txt',
+    rf'{local_cdtb}\hashes.binfields.txt',
+    rf'{local_cdtb}\hashes.game.txt',
+    rf'{local_cdtb}\hashes.lcu.txt'
+)
+remote_cdtb = 'https://raw.communitydragon.org/data/hashes/lol'
+remote_filehashes = (
+    rf'{remote_cdtb}/hashes.binentries.txt',
+    rf'{remote_cdtb}/hashes.binhashes.txt',
+    rf'{remote_cdtb}/hashes.bintypes.txt',
+    rf'{remote_cdtb}/hashes.binfields.txt',
+    rf'{remote_cdtb}/hashes.game.txt',
+    rf'{remote_cdtb}/hashes.lcu.txt'
+)
+
+def sync_hashes():
+    def sync_hash(lfh, rfh):
+        try:
+            get = requests.get(rfh, stream=True)
+            get.raise_for_status()
+            letag = etags.get(rfh, None)
+            retag = get.headers['Etag']
+            if not lepath.exists(lfh) or letag == None or letag != retag:
+                print(f'hash_helper: Downloading: {rfh}')
+                etags[rfh] = retag
+                with open(lfh, 'wb') as f:
+                    for chunk in get.iter_content(1024**2):
+                        f.write(chunk)
+        except Exception as e:
+            print(f'hash_helper: Error: Sync hash: {rfh}: {e}')
+            print(traceback.format_exc())
+
+    # read etags
+    etags = {}
+    if lepath.exists(local_etag):
+        with open(local_etag, 'r') as f:
+            etags = json.load(f)
+    # sync
+    ts = [
+        threading.Thread(target=sync_hash, args=(lfh, rfh,), daemon=True)
+        for lfh, rfh in zip(local_filehashes, remote_filehashes)
+    ]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    print(f'hash_helper: Finish: Sync all hashes.')
+    # write etags
+    with open(local_etag, 'w+') as f:
+        json.dump(etags, f, indent=4)
+
+class BinHashes(dict):
     def __getitem__(self, key):
-        if key in self.keys():
+        if key in self:
             return super().__getitem__(key)
         else:
-            super().__setitem__(key, pyRitoFile.bin.BINHasher.raw_to_hex(key))
+            value = pyRitoFile.maths.hash_fnv1a(key)
+            super().__setitem__(key, value)
+            return value
+bin_hashes = BinHashes()
+        
+class WadHashes(dict):
+    def __getitem__(self, key):
+        if key in self:
             return super().__getitem__(key)
+        else:
+            value = pyRitoFile.maths.hash_xxh64(key)
+            super().__setitem__(key, value)
+            return value
+wad_hashes = WadHashes()
 
+def extract(*file_paths):
+    # init
+    prefixes = (
+        'assets/', 
+        'clientstates/',
+        'data/',
+        'levels/',
+        'maps/',
+        'uiautoatlas/',
+        'ux/'
+    )
+    ehashes = (
+        ({}, rf'{local_extracted}\hashes.binentries.txt', bsl1, bsl2, 8),
+        ({}, rf'{local_extracted}\hashes.binhashes.txt', bsl1, bsl2, 8),
+        ({}, rf'{local_extracted}\hashes.game.txt', wsl1, wsl2, 16)
+    )
+    binentries_txt = ehashes[0][0]
+    binhashes_txt = ehashes[1][0]
+    game_txt = ehashes[2][0]
+    string_type = 16
+    list_types = {128, 129}
+    embed_types = {130, 131}
+    option_type = 133
+    map_type = 134
+    read_data = pyRitoFile.wad.read_data
+    # extract func
+    def extract_skn(path):
+        try:
+            skn = pyRitoFile.skn.read(path)
+            for submesh in skn.submeshes:
+                binhashes_txt[bin_hashes[submesh.name]] = submesh.name
+        except Exception as e:
+            print(f'hash_helper: Error: {e}')
+            print(traceback.format_exc())
 
-BIN_HASHES = (
-    'hashes.binentries.txt',
-    'hashes.binhashes.txt',
-    'hashes.bintypes.txt',
-    'hashes.binfields.txt'
-)
-WAD_HASHES = (
-    'hashes.game.txt',
-    'hashes.lcu.txt',
-)
-ALL_HASHES = BIN_HASHES + WAD_HASHES
+    def extract_skl(path):
+        try:
+            skl = pyRitoFile.skl.read(path)
+            for joint in skl.joints:
+                binhashes_txt[bin_hashes[joint.name]] = joint.name
+        except Exception as e:
+            print(f'hash_helper: Error: {e}')
+            print(traceback.format_exc())
 
-class Storage:
-    hashtables = {key: {} for key in ALL_HASHES}
-    bin_hashes = Bin_Hashes()
-
-    def read_all_hashes(): CustomHashes.read_all_hashes()
-    def read_wad_hashes(): CustomHashes.read_wad_hashes()
-    def read_bin_hashes(): CustomHashes.read_bin_hashes()
-    def free_all_hashes(): CustomHashes.free_all_hashes()
-    def free_wad_hashes(): CustomHashes.free_wad_hashes()
-    def free_bin_hashes(): CustomHashes.free_bin_hashes()
-
-
-class CDTBHashes:
-    # for syncing CDTB hashes
-    local_dir = './pref/hashes/cdtb_hashes'
-
-    def local_file(filename):
-        return f'{CDTBHashes.local_dir}/{filename}'
-
-    def remote_file(filename):
-        # return f'https://raw.githubusercontent.com/CommunityDragon/CDTB/master/cdragontoolbox/{filename}'
-        return f'https://raw.communitydragon.org/data/hashes/lol/{filename}'
+    def extract_bin(path):
+        def extract_data(data_type, data):
+            if data_type == string_type:
+                data = data.lower()
+                if data.startswith(prefixes):
+                    game_txt[wad_hashes[data]] = data
+                if data.endswith('.dds'):
+                    dirname, basename = lepath.split(data)
+                    data2x = f'{dirname}/2x_{basename}'
+                    data4x = f'{dirname}/4x_{basename}'
+                    game_txt[wad_hashes[data2x]] = data2x
+                    game_txt[wad_hashes[data4x]] = data4x
+                elif data.endswith('.bin'):
+                    datapy = lepath.ext(data, '.bin', '.py')
+                    game_txt[wad_hashes[datapy]] = datapy
+            elif data_type in list_types:
+                value_type, values = data
+                for value in values:
+                    extract_data(value_type, value)
+            elif data_type in embed_types:
+                (class_hash, _class_hash), fields = data
+                for field in fields:
+                    extract_field(field)
+            elif data_type == option_type:
+                value_type, value = data
+                if value is not None:
+                    extract_data(value_type, value)
+            elif data_type == map_type:
+                key_type, value_type, pairs = data
+                for key, value in pairs.items():
+                    extract_data(key_type, key)
+                    extract_data(value_type, value)
     
-    def calculate_size():
-        total_size = 0
-        for root, dirs, files in os.walk(CDTBHashes.local_dir):
-            for file in files:
-                total_size += lepath.getsize(lepath.join(root, file))
-        return to_human(total_size)
+        def extract_field(field):
+            extract_data(field.data_type, field.data)
 
-    etag_path = f'{local_dir}/etag.json'
-    ETAG = {}
-
-    @staticmethod
-    def sync_hashes(*filenames):
-        def sync_hash(filename):
-            try:
-                local_file = CDTBHashes.local_file(filename)
-                remote_file = CDTBHashes.remote_file(filename)
-                # GET request
-                get = requests.get(remote_file, stream=True)
-                get.raise_for_status()
-                # get etag and compare, new etag = sync
-                etag_local = CDTBHashes.ETAG.get(filename, None)
-                etag_remote = get.headers['ETag']
-                if etag_local == None or etag_local != etag_remote or not lepath.exists(local_file):
-                    # set etag
-                    CDTBHashes.ETAG[filename] = etag_remote
-                    # download file
-                    bytes_downloaded = 0
-                    chunk_size = 1024**2
-                    bytes_downloaded_log = 0
-                    bytes_downloaded_log_limit = 1024**2
-                    with open(local_file, 'wb') as f:
-                        for chunk in get.iter_content(chunk_size):
-                            chunk_length = len(chunk)
-                            bytes_downloaded += chunk_length
-                            f.write(chunk)
-                            bytes_downloaded_log += chunk_length
-                            if bytes_downloaded_log > bytes_downloaded_log_limit:
-                                print(f'hash_helper: Downloading: {remote_file}: {to_human(bytes_downloaded)}')
-                                bytes_downloaded_log = 0
-                print(f'hash_helper: Finish: Sync hash: {local_file}')
-            except Exception as e:
-                print(f'hash_helper: Error: Sync hash: {filename}: {e}')
-                print(traceback.format_exc())
-            CustomHashes.combine_custom_hashes(filename)
+        try:
+            bin = pyRitoFile.bin.read(path)
+            for entry in bin.entries:
+                # map some specific entry
+                target_field = None
+                if entry.class_hash == bin_hashes['VfxSystemDefinitionData']:
+                    target_field = bin_hashes['particlePath']
+                elif entry.class_hash == bin_hashes['StaticMaterialDef']:
+                    target_field = bin_hashes['name']
+                for field in entry.fields:
+                    if target_field and field.hash == target_field:
+                        binentries_txt[entry.class_hash] = field.data
+                    extract_field(field)
+            for link in bin.links:
+                extract_data(string_type, link) # treat as string
+        except Exception as e:
+            print(f'hash_helper: Error: {e}')
+            print(traceback.format_exc())
             
-        threads = [
-            threading.Thread(
-                target = lambda f=filename: sync_hash(f),
-                daemon = True
-            )
-            for filename in filenames
-        ]                   
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        print(f'hash_helper: Finish: Sync all hashes.')
+    def extract_wad(path):
+        wad = pyRitoFile.wad.read(path)
+        with open(path, 'rb') as bs:
+            for chunk in wad.chunks:
+                chunk_data = read_data(chunk, bs)
+                if chunk.extension == 'skn':
+                    extract_skn(chunk_data)
+                elif chunk.extension == 'skl':
+                    extract_skl(chunk_data)
+                elif chunk.extension == 'bin':
+                    extract_bin(chunk_data)
+        
+    # read existed extract hash
+    for hashes, filehash, sl1, sl2, fmhex in ehashes:
+        read_hash(hashes, filehash, sl1, sl2)
+    # extract hashes
+    for file_path in file_paths:
+        print(f'hash_helper: Finish: Extracting: {filehash}')
+        if file_path.endswith('.wad.client'):
+            extract_wad(file_path)
+        elif file_path.endswith('.skn'):
+            extract_skn(file_path)
+        elif file_path.endswith('.skl'):
+            extract_skl(file_path)
+        elif file_path.endswith('.bin'):
+            extract_bin(file_path)
+    # write out extracted hashes 
+    for hashes, filehash, sl1, sl2, fmhex in ehashes:
+        write_hash(hashes, filehash, fmhex)
+        print(f'hash_helper: Finish: Extract: {filehash}')
 
-    @staticmethod
-    def sync_all():
-        # read etags
-        CDTBHashes.ETAG = {}
-        if lepath.exists(CDTBHashes.etag_path):
-            with open(CDTBHashes.etag_path, 'r', encoding='utf-8') as f:
-                CDTBHashes.ETAG = json.load(f)
-        CDTBHashes.sync_hashes(*ALL_HASHES)
-        # write etags
-        with open(CDTBHashes.etag_path, 'w+', encoding='utf-8') as f:
-            json.dump(CDTBHashes.ETAG, f, indent=4, ensure_ascii=False)
+def clear_extracted():
+    shutil.rmtree(lepath.abs(local_extracted))
+    os.makedirs(local_extracted, exist_ok=True)
+    print(f'hash_helper: Finish: Clear: {local_extracted}')
 
-
-class ExtractedHashes:
-    # extracted hash
-    local_dir = './pref/hashes/extracted_hashes'
-
-    def local_file(filename): 
-        return f'{ExtractedHashes.local_dir}/{filename}'
-
-    @staticmethod
-    def calculate_size():
-        total_size = 0
-        for root, dirs, files in os.walk(ExtractedHashes.local_dir):
-            for file in files:
-                total_size += lepath.getsize(lepath.join(root, file))
-        return to_human(total_size)
-    
-    @staticmethod
-    def clear_extract_hashes(*filenames):
-        for filename in filenames:
-            eh_file = ExtractedHashes.local_file(filename)
-            if lepath.exists(eh_file):
-                os.remove(lepath.abs(eh_file))
-        print('hash_helper: Finish: Clear Extract Hashes.')
-    
-    @staticmethod
-    def extract(*file_paths):
-        wad_hash = pyRitoFile.wad.WADHasher.raw_to_hex
-        start_game_path = [
-            'assets/', 
-            'clientstates/',
-            'data/',
-            'levels/',
-            'maps/',
-            'uiautoatlas/',
-            'ux/'
-        ]
-
-        hashtables = {
-            'hashes.binentries.txt': {},
-            'hashes.binhashes.txt': {},
-            'hashes.game.txt': {}
-        }
-        def extract_skn(path, raw=False):
-            try:
-                # extract submesh hash <-> submesh name
-                skn = pyRitoFile.skn.SKN().read(path, raw)
-                for submesh in skn.submeshes:
-                    hashtables['hashes.binhashes.txt'][submesh.bin_hash] = submesh.name
-                    print(f'hash_helper: Finish: Extract: {submesh.name}')
-            except Exception as e:
-                print(f'hash_helper: Error: {e}')
-                print(traceback.format_exc())
-                
-
-        def extract_skl(path, raw=False):
-            try:
-                # extract joint hash <-> joint name
-                skl = pyRitoFile.skl.SKL().read(path, raw)
-                for joint in skl.joints:
-                    hashtables['hashes.binhashes.txt'][joint.bin_hash] = joint.name
-                    print(f'hash_helper: Finish: Extract: {joint.name}')
-            except Exception as e:
-                print(f'hash_helper: Error: {e}')
-                print(traceback.format_exc())
-
-        def extract_bin(path, raw=False):
-            def extract_file_value(value, value_type):
-                if value_type == pyRitoFile.bin.BINType.STRING:
-                    value = value.lower()
-                    if any(value.startswith(prefix) for prefix in start_game_path):
-                        hashtables['hashes.game.txt'][wad_hash(
-                            value)] = value
-                        print(f'hash_helper: Finish: Extract: {value}')
-                        if value.endswith('.dds'):
-                            temp = value.split('/')
-                            basename = temp[-1]
-                            dirname = '/'.join(temp[:-1])
-                            value2x = f'{dirname}/2x_{basename}'
-                            value4x = f'{dirname}/4x_{basename}'
-                            hashtables['hashes.game.txt'][wad_hash(
-                                value2x)] = value2x
-                            hashtables['hashes.game.txt'][wad_hash(
-                                value4x)] = value4x
-                        elif value.endswith('.bin'):
-                            valuepy = lepath.ext(value, '.bin', '.py')
-                            hashtables['hashes.game.txt'][wad_hash(valuepy)] = valuepy
-                elif value_type in (pyRitoFile.bin.BINType.LIST, pyRitoFile.bin.BINType.LIST2):
-                    for v in value.data:
-                        extract_file_value(v, value_type)
-                elif value_type in (pyRitoFile.bin.BINType.EMBED, pyRitoFile.bin.BINType.POINTER):
-                    if value.data != None:
-                        for f in value.data:
-                            extract_file_field(f)
-
-            def extract_file_field(field):
-                if field.type in (pyRitoFile.bin.BINType.LIST, pyRitoFile.bin.BINType.LIST2):
-                    for v in field.data:
-                        extract_file_value(v, field.value_type)
-                elif field.type in (pyRitoFile.bin.BINType.EMBED, pyRitoFile.bin.BINType.POINTER):
-                    if field.data != None:
-                        for f in field.data:
-                            extract_file_field(f)
-                elif field.type == pyRitoFile.bin.BINType.MAP:
-                    for key, value in field.data.items():
-                        extract_file_value(key, field.key_type)
-                        extract_file_value(value, field.value_type)
-                elif field.type == pyRitoFile.bin.BINType.OPTION and field.value_type == pyRitoFile.bin.BINType.STRING:
-                    if field.data != None:
-                        extract_file_value(field.data, field.value_type)
-                else:
-                    extract_file_value(field.data, field.type)
-
-            try:
-                bin = pyRitoFile.bin.BIN().read(path, raw)
-                # extract VfxSystemDefinitionData <-> particlePath
-                VfxSystemDefinitionDatas = bin.get_items(lambda entry: entry.type == Storage.bin_hashes['VfxSystemDefinitionData'])
-                for VfxSystemDefinitionData in VfxSystemDefinitionDatas:
-                    particlePaths = VfxSystemDefinitionData.get_items(lambda field: field.hash == Storage.bin_hashes['particlePath'])
-                    if len(particlePaths) > 0:
-                        hashtables['hashes.binentries.txt'][VfxSystemDefinitionData.hash] = particlePaths[0].data
-                        print(f'hash_helper: Finish: Extract: {particlePaths[0].data}')
-                # extract StaticMaterialDef <-> name
-                StaticMaterialDefs = bin.get_items(lambda entry: entry.type == Storage.bin_hashes['StaticMaterialDef'])
-                for StaticMaterialDef in StaticMaterialDefs:
-                    names = StaticMaterialDef.get_items(lambda field: field.hash == Storage.bin_hashes['name'])
-                    if len(names) > 0:
-                        hashtables['hashes.binentries.txt'][StaticMaterialDef.hash] = names[0].data
-                        print(f'hash_helper: Finish: Extract: {names[0].data}')
-                # extract file hashes
-                for entry in bin.entries:
-                    for field in entry.data:
-                        extract_file_field(field)
-                for link in bin.links:
-                    extract_file_value(link, pyRitoFile.bin.BINType.STRING)
-            except Exception as e:
-                print(f'hash_helper: Error: {e}')
-                print(traceback.format_exc())
-                
-        def extract_wad(path):
-            wad = pyRitoFile.wad.WAD().read(path)
-            with pyRitoFile.stream.BytesStream.reader(path) as bs:
-                for chunk in wad.chunks:
-                    chunk.read_data(bs)
-                    if chunk.extension == 'skn':
-                        extract_skn(chunk.data, raw=True)
-                    elif chunk.extension == 'skl':
-                        extract_skl(chunk.data, raw=True)
-                    elif chunk.extension == 'bin':
-                        extract_bin(chunk.data, raw=True)
-                    chunk.free_data()
-            
-
-        # extract hashes base on file types
-        for file_path in file_paths:
-            if file_path.endswith('.wad.client'):
-                extract_wad(file_path)
-            elif file_path.endswith('.skn'):
-                extract_skn(file_path)
-            elif file_path.endswith('.skl'):
-                extract_skl(file_path)
-            elif file_path.endswith('.bin'):
-                extract_bin(file_path)
-        # write out hashes txt
-        for filename, hashtable in hashtables.items():
-            local_file = ExtractedHashes.local_file(filename)
-            sep = get_hash_separator(filename)
-            # read existed extracted hashes
-            if lepath.exists(local_file):
-                with open(local_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        hashtable[line[:sep]] = line[sep+1:-1]
-            # write
-            with open(local_file, 'w+', encoding='utf-8') as f:
-                f.writelines(
-                    f'{key} {value}\n'
-                    for key, value in sorted(
-                        hashtable.items(), key=lambda item: item[1]
-                    )
-                )
-            print(f'hash_helper: Finish: Extract: {local_file}')
-            CustomHashes.combine_custom_hashes(filename)
-
-
-class CustomHashes:
-    # combine with CDTB and extracted hashes
-    # use for all functions in this app
-    local_dir = './pref/hashes/custom_hashes'
-
-    def local_file(filename): 
-        return f'{CustomHashes.local_dir}/{filename}'
-    
-    def calculate_size():
-        total_size = 0
-        for root, dirs, files in os.walk(CustomHashes.local_dir):
-            for file in files:
-                total_size += lepath.getsize(lepath.join(root, file))
-        return to_human(total_size)
-
-    @staticmethod
-    def read_hashes(*filenames):
-        for filename in filenames:
-            local_file = CustomHashes.local_file(filename)
-            # safe check
-            if lepath.exists(local_file):
-                # read hashes
-                with open(local_file, 'r', encoding='utf-8') as f:
-                    sep = get_hash_separator(filename)
-                    for line in f:
-                        Storage.hashtables[filename][line[:sep]] = line[sep+1:-1]
-
-    @staticmethod
-    def write_hashes(*filenames):
-        for filename in filenames:
-            local_file = CustomHashes.local_file(filename)
-            # write combined hashes
-            with open(local_file, 'w+', encoding='utf-8') as f:
-                f.writelines(
-                    f'{key} {value}\n'
-                    for key, value in sorted(
-                        Storage.hashtables[filename].items(), key=lambda item: item[1]
-                    )
-                )
-
-    @staticmethod
-    def read_bin_hashes():
-        CustomHashes.read_hashes(*BIN_HASHES)
-
-    @staticmethod
-    def read_wad_hashes():
-        CustomHashes.read_hashes(*WAD_HASHES)
-
-    @staticmethod
-    def read_all_hashes():
-        CustomHashes.read_hashes(*ALL_HASHES)
-
-    @staticmethod
-    def free_hashes(*filenames):
-        for filename in filenames:
-            Storage.hashtables[filename] = {}
-
-    @staticmethod
-    def free_bin_hashes(*filenames):
-        CustomHashes.free_hashes(*BIN_HASHES)
-
-    @staticmethod
-    def free_wad_hashes(*filenames):
-        CustomHashes.free_hashes(*WAD_HASHES)
-
-    @staticmethod
-    def free_all_hashes():
-        CustomHashes.free_hashes(*ALL_HASHES)
-
-    @staticmethod
-    def combine_custom_hashes(*filenames):
-        for filename in filenames:
-            hashtable = {}
-            cdtb_file = CDTBHashes.local_file(filename)
-            ex_file = ExtractedHashes.local_file(filename)
-            ch_file = CustomHashes.local_file(filename)
-            sep = get_hash_separator(filename)
-            # read cdtb hashes
-            if lepath.exists(cdtb_file):
-                with open(cdtb_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        hashtable[line[:sep]] = line[sep+1:-1]
-            # read extracted hashes
-            if lepath.exists(ex_file):
-                with open(ex_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        hashtable[line[:sep]] = line[sep+1:-1]
-            # read existed custom hashes
-            if lepath.exists(ch_file):
-                with open(ch_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        hashtable[line[:sep]] = line[sep+1:-1]
-            # write combined hashes
-            with open(ch_file, 'w+', encoding='utf-8') as f:
-                f.writelines(
-                    f'{key} {value}\n'
-                    for key, value in sorted(
-                        hashtable.items(), key=lambda item: item[1]
-                    )
-                )
-            print(f'hash_helper: Finish: Combine: {ch_file}')
-
-    @staticmethod
-    def reset_custom_hashes(*filenames):
-        for filename in filenames:
-            cdtb_file = CDTBHashes.local_file(filename)
-            ch_file = CustomHashes.local_file(filename)
-            # copy file from cdtb
-            with open(cdtb_file, 'rb') as f:
-                data = f.read()
-            with open(ch_file, 'wb+') as f:
-                f.write(data)
-        print('hash_helper: Finish: Reset Custom Hashes to CDTB Hashes.')
+def apply_basedir(local_cdtb, local_extracted):
+    global bfilehashes, wfilehashes, local_filehashes
+    bfilehashes = (
+        (rf'{local_cdtb}\hashes.binentries.txt', bsl1, bsl2),
+        (rf'{local_cdtb}\hashes.binhashes.txt', bsl1, bsl2),
+        (rf'{local_cdtb}\hashes.bintypes.txt', bsl1, bsl2),
+        (rf'{local_cdtb}\hashes.binfields.txt', bsl1, bsl2),
+        (rf'{local_extracted}\hashes.binentries.txt', bsl1, bsl2),
+        (rf'{local_extracted}\hashes.binhashes.txt', bsl1, bsl2)
+    )
+    wfilehashes = (
+        (rf'{local_cdtb}\hashes.game.txt', wsl1, wsl2),
+        (rf'{local_cdtb}\hashes.lcu.txt', wsl1, wsl2),
+        (rf'{local_extracted}\hashes.game.txt', wsl1, wsl2)
+    )
+    local_filehashes = (
+        rf'{local_cdtb}\hashes.binentries.txt',
+        rf'{local_cdtb}\hashes.binhashes.txt',
+        rf'{local_cdtb}\hashes.bintypes.txt',
+        rf'{local_cdtb}\hashes.binfields.txt',
+        rf'{local_cdtb}\hashes.game.txt',
+        rf'{local_cdtb}\hashes.lcu.txt'
+    )
 
 def init():
-    # load setting first
-    CDTBHashes.local_dir = setting.get('CDTBHashes.local_dir', CDTBHashes.local_dir)
-    ExtractedHashes.local_dir = setting.get('ExtractedHashes.local_dir', ExtractedHashes.local_dir)
-    CustomHashes.local_dir = setting.get('CustomHashes.local_dir', CustomHashes.local_dir)
+    global local_cdtb, local_extracted
+    local_cdtb = setting.get('hash_helper.local_cdtb', local_cdtb)
+    local_extracted = setting.get('hash_helper.local_extracted', local_extracted)
+    apply_basedir(local_cdtb, local_extracted)
     # ensure folder
-    os.makedirs(CDTBHashes.local_dir, exist_ok=True)
-    os.makedirs(ExtractedHashes.local_dir, exist_ok=True)
-    os.makedirs(CustomHashes.local_dir, exist_ok=True)
+    os.makedirs(local_cdtb, exist_ok=True)
+    os.makedirs(local_extracted, exist_ok=True)

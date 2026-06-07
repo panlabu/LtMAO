@@ -1,19 +1,16 @@
 from io import BytesIO
 from struct import unpack, iter_unpack, pack
-from dataclasses import dataclass
-
+from .maths import hash_xxh3_64
 import gzip
-
 # not safe because external modules
 try: 
     import pyzstd
-    from xxhash import xxh64 as hash_xxh64, xxh3_64 as hash_xxh3_64
 except:
-    print('Warning: pyRitoFile.wad failed to import pyzstd, xxhash.')
+    print('Warning: pyRitoFile.wad failed to import pyzstd.')
 
 
 sigmap = (
-    (slice(0, 13), {
+    (slice(13), {
         b'"use strict";': 'min.js',
         b'<!-- Elements': 'template.html',
         b'[ObjectBegin]': 'sco'
@@ -21,16 +18,16 @@ sigmap = (
     (slice(8, 12), {
         b'WAVE': 'wav'
     }),
-    (slice(0, 10), {
+    (slice(10), {
         b'<template ': 'template.html',
         b'#MayaIcons': 'swatches',
         b'#PROP_text': 'py'
     }),
-    (slice(0, 9), {
+    (slice(9), {
         b'\x1bLuaQ\x00\x01\x04\x04': 'luabin',
         b'\x1bLuaQ\x00\x01\x04\x08': 'luabin64'
     }),
-    (slice(0, 8), {
+    (slice(8), {
         b'r3d2Mesh': 'scb',
         b'r3d2anmd': 'anm',
         b'r3d2canm': 'anm',
@@ -43,7 +40,7 @@ sigmap = (
     (slice(4, 8), {
         b'\xc3O\xfd"': 'skl'
     }),
-    (slice(0, 4), {
+    (slice(4), {
         b'OggS': 'ogg',
         b'\x00\x01\x00\x00': 'ttf',
         b'\x1aE\xdf\xa3': 'webm',
@@ -64,16 +61,16 @@ sigmap = (
         b'FOR4': 'mb',
         b'FOR8': 'mb'
     }),
-    (slice(0, 3), {
+    (slice(3), {
         b'\xff\xd8\xff': 'jpg'
     }),
-    (slice(0, 2), {
+    (slice(2), {
         b'RW': 'wad',
         b'[\n': 'json',
         b'{\n': 'json'
     }),
 )
-exts = [ext for sigpos, sigext in sigmap for ext in sigext.values()]
+exts = set([ext for sigpos, sigext in sigmap for ext in sigext.values()])
 
 def guess_extension(header):
     for sigpos, sigext in sigmap:
@@ -81,16 +78,6 @@ def guess_extension(header):
         if ext is not None:
             return ext
     return None
-
-def hash_to_str(h, hashtable):
-    for filename, hashes in hashtable:
-        v = hashes.get(h)
-        if v is not None:
-            return v
-    return f'{h:016x}'
-
-def str_to_hash(s):
-    return hash_xxh64(s.lower()).intdigest()
 
 def is_hex(s):
     if len(s) != 16: return False
@@ -101,11 +88,12 @@ def is_hex(s):
         return False
     
 def unhash(wad, hashtable):
+    get = hashtable.get
     for chunk in wad.chunks:
-        chunk._path = hash_to_str(chunk.hash, hashtable)
-        if '.' in chunk._path and chunk.extension is None:
+        chunk._hash = get(chunk.hash, f'{chunk.hash:016x}')
+        if '.' in chunk._hash and chunk.extension is None:
             for ext in exts:
-                if chunk._path.endswith(ext):
+                if chunk._hash.endswith(ext):
                     chunk.extension = ext 
                     break
 
@@ -134,7 +122,8 @@ def write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks=None
         chunk_data = pyzstd.compress(chunk_data)
         chunk.compression_type = 3
     chunk.compressed_size = len(chunk_data)
-    chunk.checksum = hash_xxh3_64(chunk_data).intdigest()
+    chunk.checksum = hash_xxh3_64(chunk_data)
+
     # check duplicated using previous_chunks: dict
     if previous_chunks:
         key = (chunk.checksum, chunk.compressed_size, chunk.decompressed_size)
@@ -171,24 +160,29 @@ def write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks=None
     ))
 
 
-@dataclass(slots=True)
 class Chunk:
-    id: int
-    hash: int
-    _path: str # display field
-    offset: int
-    compressed_size: int
-    decompressed_size: int
-    compression_type: int
-    duplicated: bool
-    checksum: int
-    extension: str
+    __slots__ = ('id', 'hash', '_hash', 'offset', 'compressed_size', 'decompressed_size', 'compression_type', 'duplicated', 'checksum', 'extension')
 
-@dataclass(slots=True)
+    def __init__(self, id, hash, _hash, offset, compressed_size, decompressed_size, compression_type, duplicated, checksum, extension):
+        self.id = id
+        self.hash = hash
+        self._hash = _hash
+        self.offset = offset
+        self.compressed_size = compressed_size
+        self.decompressed_size = decompressed_size
+        self.compression_type = compression_type
+        self.duplicated = duplicated
+        self.checksum = checksum
+        self.extension = extension
+
 class Wad:
-    signature: str
-    version: tuple[int, int]
-    chunks: tuple[Chunk, ...]
+    __slots__ = ('signature', 'version', 'chunks')
+
+    def __init__(self, signature, version, chunks):
+        self.signature = signature
+        self.version = version
+        self.chunks = chunks
+
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
@@ -207,7 +201,7 @@ def read(path):
         elif major == 3:
             bs.seek(268)
         # chunks
-        chunk_count, = unpack('<I', bs.read(4))
+        chunk_count = int.from_bytes(bs.read(4), 'little')
         chunks = [
             Chunk(
                 chunk_id,
@@ -220,7 +214,8 @@ def read(path):
                 # these value only in v2+, no check until i found a wad v1
                 # no subchunk of v3.4 yet
                 duplicated, 
-                checksum
+                checksum,
+                None
             )
             for chunk_id, (hash, offset, compressed_size, decompressed_size, type, duplicated, checksum) in enumerate(iter_unpack('<Q3IB?2xQ', bs.read(chunk_count*32)))
         ]
@@ -250,4 +245,4 @@ def write(wad, path=None):
                 0, # subchunk
                 chunk.checksum
             ))
-    return stream.getvalue() if path is None else None
+        return stream.getvalue() if path is None else None

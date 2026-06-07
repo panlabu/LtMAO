@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from io import BytesIO
 from struct import unpack
 
@@ -8,13 +7,15 @@ try:
 except:
     print('Warning: pyRitoFile.manifest failed to import pyzstd.')
 
-@dataclass(slots=True)
 class Manifest:
-    signature: bytes 
-    version: tuple[int, int]
-    flags: int
-    manifest_id: int
-    body: bytes 
+    __slots__ = ('signature', 'version', 'flags', 'manifest_id', 'body')
+
+    def __init__(self, signature, version, flags, manifest_id, body):
+        self.signature = signature
+        self.version = version
+        self.flags = flags
+        self.manifest_id = manifest_id
+        self.body = body
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')

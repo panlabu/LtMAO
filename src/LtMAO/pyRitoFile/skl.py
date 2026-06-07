@@ -1,40 +1,52 @@
-from dataclasses import dataclass
 from struct import unpack, iter_unpack, pack
 from io import BytesIO
 from .maths import hash_elf, matrix4_multiply, matrix4_inverse, matrix4_decompose
 
-@dataclass(slots=True)
 class Joint:
-    name: str
-    flags: int
-    id: int
-    parent: int
-    hash: int
-    radius: float
-    translate: tuple[float, float, float]
-    rotate: tuple[float, float, float, float]
-    scale: tuple[float, float, float]
-    inversed_bind_translate: tuple[float, float, float]
-    inversed_bind_rotate: tuple[float, float, float, float]
-    inversed_bind_scale: tuple[float, float, float]
-    transform: tuple[float, ...]
+    __slots__ = (
+        'name', 'flags', 'id', 'parent', 'hash', 'radius', 'translate', 
+        'rotate', 'scale', 'inversed_bind_translate', 'inversed_bind_rotate', 
+        'inversed_bind_scale', 'transform'
+    )
+
+    def __init__(self, name, flags, id, parent, hash, radius, translate, rotate, scale, inversed_bind_translate, inversed_bind_rotate, inversed_bind_scale, transform):
+        self.name = name
+        self.flags = flags
+        self.id = id
+        self.parent = parent
+        self.hash = hash
+        self.radius = radius
+        self.translate = translate
+        self.rotate = rotate
+        self.scale = scale
+        self.inversed_bind_translate = inversed_bind_translate
+        self.inversed_bind_rotate = inversed_bind_rotate
+        self.inversed_bind_scale = inversed_bind_scale
+        self.transform = transform
 
 class Skeleton:
-    file_size: int
-    signature: bytes
-    version: int
-    flags: int
-    name: str
-    asset: str
-    joints: tuple[Joint, ...]
-    influences: tuple[int, ...]
+    __slots__ = (
+        'file_size', 'signature', 'version', 'flags', 'name', 
+        'asset', 'joints', 'influences'
+    )
+
+    def __init__(self, file_size, signature, version, flags, name, asset, joints, influences):
+        self.file_size = file_size
+        self.signature = signature
+        self.version = version
+        self.flags = flags
+        self.name = name
+        self.asset = asset
+        self.joints = joints
+        self.influences = influences
+
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
-        # init some data
-        file_size = None                                       
-        flags = None                                           
+        # init 
+        file_size = None
+        flags = None
         name = None
         asset = None
 
@@ -81,7 +93,7 @@ def read(path):
             # influences
             if influences_offset > 0 and influence_count > 0:
                 bs.seek(influences_offset)
-                influences = unpack(f'<{influence_count}h', influence_count*2)
+                influences = unpack(f'<{influence_count}h', bs.read(influence_count*2))
             # name and asset 
             if name_offset > 0:
                 bs.seek(name_offset)
@@ -95,18 +107,18 @@ def read(path):
             signature = bs.read(8)
             if signature != b'r3d2sklt':
                 raise Exception(f'pyRitoFile: Error: Read SKL {path}: Wrong file signature: {signature}')
-            version, = unpack('<I', bs.read(4))
+            version = int.from_bytes(bs.read(4), 'little')
             if version not in {1, 2}:
                 raise Exception(f'pyRitoFile: Error: Read SKL {path}: Unsupported file version: {version}')
             # joints
             skeleton_id, joint_count = unpack('<II', bs.read(8))
             joints = [
                 Joint(
-                    ud[0].rstrip(b'\x00').decode(),
+                    n:=ud[0].rstrip(b'\x00').decode(),
                     None,
                     joint_id,
                     ud[1],
-                    None,
+                    hash_elf(n),
                     ud[2],
                     None,
                     None,
@@ -136,9 +148,8 @@ def read(path):
                 for joint_id, ud in enumerate(iter_unpack('<32si13f', bs.read(88*joint_count)))
             ]
                 
-            # joint hash and transform decompose
+            # transform decompose
             for joint_id, joint in enumerate(joints):
-                joint.hash = hash_elf(joint.name)
                 transform = joint.transform if joint.parent == - 1 else matrix4_multiply(joint.transform, matrix4_inverse(joints[joint.parent].transform))
 
                 joint.translate, joint.rotate, joint.scale = matrix4_decompose(transform)
@@ -149,7 +160,7 @@ def read(path):
             if version == 1:
                 influences = [*range(joint_count)]
             if version == 2:
-                influence_count, = unpack('<I', bs.read(4))
+                influence_count = int.from_bytes(bs.read(4), 'little')
                 influences = unpack(f'<{influence_count}I', bs.read(influence_count*4))
 
         return Skeleton(
@@ -224,4 +235,4 @@ def write(skeleton, path=None):
         bs.seek(0)
         bs.write(pack('<I', file_size))
 
-    return stream.getvalue() if path is None else None
+        return stream.getvalue() if path is None else None

@@ -1,51 +1,51 @@
 from io import BytesIO
-from dataclasses import dataclass
 from struct import unpack, iter_unpack, pack
 
-@dataclass(slots=True)
 class Vertex:
-    position: tuple[float, float, float]
-    influences: tuple[int, int, int, int]
-    weights: tuple[float, float, float, float]
-    normal: tuple[float, float, float]
-    uv: tuple[float, float]
-    color: tuple[int, int, int, int]
-    tangent: tuple[float, float, float, float] 
+    __slots__ = ('position', 'influences', 'weights', 'normal', 'uv', 'color', 'tangent')
 
-@dataclass(slots=True)
+    def __init__(self, position, influences, weights, normal, uv, color, tangent):
+        self.position = position
+        self.influences = influences
+        self.weights = weights
+        self.normal = normal
+        self.uv = uv
+        self.color = color
+        self.tangent = tangent
+
+
 class Submesh:
-    name: str
-    vertex_start: int
-    vertex_count: int 
-    index_start: int
-    index_count: int 
+    __slots__ = ('name', 'vertex_start', 'vertex_count', 'index_start', 'index_count')
 
-@dataclass(slots=True)
+    def __init__(self, name, vertex_start, vertex_count, index_start, index_count):
+        self.name = name
+        self.vertex_start = vertex_start
+        self.vertex_count = vertex_count
+        self.index_start = index_start
+        self.index_count = index_count
+
 class Skin:
-    signature: bytes
-    version: tuple[int, int] 
-    flags: int
-    bounding_box: tuple[
-        tuple[float, float, float], # min
-        tuple[float, float, float]  # max
-    ]
-    bounding_sphere: tuple[
-        tuple[float, float, float], # central
-        float # distance
-    ] 
-    vertex_type: int 
-    vertex_size: int
-    submeshes: tuple[Submesh, ...] 
-    indices: tuple[int, ...] 
-    vertices: tuple[Vertex, ...] 
+    __slots__ = ('signature', 'version', 'flags', 'bounding_box', 'bounding_sphere', 'vertex_type', 'vertex_size', 'submeshes', 'indices', 'vertices')
+
+    def __init__(self, signature, version, flags, bounding_box, bounding_sphere, vertex_type, vertex_size, submeshes, indices, vertices):
+        self.signature = signature
+        self.version = version
+        self.flags = flags
+        self.bounding_box = bounding_box
+        self.bounding_sphere = bounding_sphere
+        self.vertex_type = vertex_type
+        self.vertex_size = vertex_size
+        self.submeshes = submeshes
+        self.indices = indices
+        self.vertices = vertices
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
         # init some default values
         flags = None
-        bouding_box = None
-        bouding_sphere = None
+        bounding_box = None
+        bounding_sphere = None
         vertex_type = 0
         vertex_size = 52
         vertex_format = '3f4B4f3f2f'
@@ -74,7 +74,7 @@ def read(path):
             ]
         else:
             # submeshes
-            submesh_count, = unpack('<I', bs.read(4))
+            submesh_count = int.from_bytes(bs.read(4), 'little')
             submeshes = [
                 Submesh(
                     name.rstrip(b'\x00').decode(),
@@ -87,7 +87,7 @@ def read(path):
             ]
 
             if major == 4:
-                flags, = unpack('<I', bs.read(4))
+                flags = int.from_bytes(bs.read(4), 'little') 
 
             index_count, vertex_count = unpack('<II', bs.read(8))
             # prepare vertex info
@@ -126,10 +126,10 @@ def read(path):
             Vertex(
                 # always: position, influences, weights, normal, uv
                 (vd[0], vd[1], vd[2]),
-                (vd[3], vd[4], vd[5], vd[6])
-                (vd[7], vd[8], vd[9], vd[10])
-                (vd[11], vd[12], vd[13])
-                (vd[14], vd[15])
+                (vd[3], vd[4], vd[5], vd[6]),
+                (vd[7], vd[8], vd[9], vd[10]),
+                (vd[11], vd[12], vd[13]),
+                (vd[14], vd[15]),
                 # depend: color, tangent
                 (vd[16], vd[17], vd[18]) if vertex_type > 0 else None,
                 (vd[19], vd[20], vd[21]) if vertex_type > 1 else None
@@ -199,4 +199,4 @@ def write(skin, path=None):
                 if skin.vertex_type > 1:
                     bs.write(pack('<4f', *vertex.tangent))
 
-    return stream.getvalue() if path is None else None
+        return stream.getvalue() if path is None else None

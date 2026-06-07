@@ -1,4 +1,4 @@
-from .stream import BytesStream
+from io import BytesIO
 
 
 class WPKWem:
@@ -27,7 +27,7 @@ class WPK:
         return {key: getattr(self, key) for key in self.__slots__}
 
     def read(self, path, raw=False):
-        with BytesStream.reader(path, raw) as bs:
+        with BytesIO(path) as bs:
             self.signature, = bs.read_s(4)
             if self.signature != 'r3d2':
                 raise Exception(
@@ -54,7 +54,7 @@ class WPK:
             return self
 
     def write(self, path, wem_datas, raw=False):
-        with BytesStream.writer(path, raw) as bs:
+        with BytesIO(path) as bs:
             # magic, version
             bs.write_s('r3d2')
             bs.write_u32(1)

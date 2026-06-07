@@ -1,26 +1,23 @@
-from dataclasses import dataclass
 from struct import unpack, iter_unpack, pack
 from io import BytesIO
 
-@dataclass(slots=True)
 class SceneObject:
-    signature: bytes
-    version: tuple[int, int]
-    flags: int
-    name: str
-    central: tuple[float, float, float]
-    pivot: tuple[float, float, float]
-    bounding_box: tuple[
-        tuple[float, float, float],
-        tuple[float, float, float]
-    ]
-    material: str
-    vertex_type: int
-    indices: tuple[int, ...]
-    positions: tuple[tuple[float, float, float], ...]
-    uvs: tuple[tuple[float, float], ...]
-    colors: tuple[tuple[int, int, int, int], ...]
+    __slots__ = ('signature', 'version', 'flags', 'name', 'central', 'pivot', 'bounding_box', 'material', 'vertex_type', 'indices', 'positions', 'uvs', 'colors')
 
+    def __init__(self, signature, version, flags, name, central, pivot, bounding_box, material, vertex_type, indices, positions, uvs, colors):
+        self.signature = signature
+        self.version = version
+        self.flags = flags
+        self.name = name
+        self.central = central
+        self.pivot = pivot
+        self.bounding_box = bounding_box
+        self.material = material
+        self.vertex_type = vertex_type
+        self.indices = indices
+        self.positions = positions
+        self.uvs = uvs
+        self.colors = colors
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open('rb', path)
@@ -30,14 +27,13 @@ def read(path):
         indices = []
         positions = []
         uvs = []
-
         signature = bs.read(8)
         if signature == b'[ObjectB':
             # sco
-            # header
-            signature += bs.read(6)[:-1]
-            # read each line
+            # read line
+            bs.seek(0)
             records = iter([line.split() for line in bs.read().decode().split('\n')])
+            signature = next(records)
             for record in records:
                 if not record:
                     continue
@@ -54,13 +50,13 @@ def read(path):
                     vertex_count = int(record[1])
                     positions = [
                         (float(x), float(y), float(z))
-                        for i in range(vertex_count)
-                        for x, y, z in (next(records),)
+                        for _ in range(vertex_count)
+                        for x, y, z in [next(records)]
                     ]
                 # face
                 elif key == 'Faces=':
                     face_count = int(record[1])
-                    for i in range(face_count):
+                    for _ in range(face_count):
                         rd = next(records)
                         a, b, c = int(rd[0]), int(rd[1]), int(rd[2])
                         if a == b or b == c or c == a:
@@ -89,7 +85,7 @@ def read(path):
             )
             # vertex
             if major == 3 and minor == 2:
-                vertex_type, = unpack('<I', bs.read(4))
+                vertex_type = int.from_bytes(bs.read(4), 'little')
             positions = [*iter_unpack('<3f', bs.read(vertex_count*12))]
             if vertex_type >= 1:
                 colors = [*iter_unpack('<4B', bs.read(vertex_count*4))]
@@ -181,4 +177,4 @@ def write(scene_object, path=None):
         bs.seek(152)
         bs.write(pack('<6f', x_min, y_min, z_min, x_max, y_max, z_max))
 
-    return stream.getvalue() if path is None else None
+        return stream.getvalue() if path is None else None

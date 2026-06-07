@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 
 from .. import lepath, pyRitoFile, hash_helper
 
-all_bin_types = [member.name.lower() for member in pyRitoFile.bin.BINType]
+all_bin_types = pyRitoFile.bin.btype_names.values()
 
 def build_links(treewidget: QTreeWidget, links):
     links_item = QTreeWidgetItem(treewidget)

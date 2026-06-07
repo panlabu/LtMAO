@@ -931,56 +931,35 @@ def build_hash_helper(widget: QWidget):
 
     # path hash + reset button
     def get_hash_size(hash_id):
-        if hash_id == 0:
-            return hash_helper.CDTBHashes.calculate_size()
-        elif hash_id == 1:
-            return hash_helper.ExtractedHashes.calculate_size()
-        else:
-            return hash_helper.CustomHashes.calculate_size()
+        return hash_helper.total_size(hash_helper.local_cdtb) if hash_id == 0 else hash_helper.total_size(hash_helper.local_extracted)
 
     def get_hash_path(hash_id):
-        if hash_id == 0:
-            return setting.get('CDTBHashes.local_dir', hash_helper.CDTBHashes.local_dir)
-        elif hash_id == 1:
-            return setting.get('ExtractedHashes.local_dir', hash_helper.ExtractedHashes.local_dir)
-        else:
-            return setting.get('CustomHashes.local_dir', hash_helper.CustomHashes.local_dir)
+        return setting.get('hash_helper.local_cdtb', hash_helper.local_cdtb) if hash_id == 0 else setting.get('hash_helper.local_extracted', hash_helper.local_extracted)
 
     def set_hash_path(hash_id, label):
         dialog = QFileDialog()
         dirpath = dialog.getExistingDirectory(widget, 'Select hash folder', setting.get('qtGUI.default_folder', ''))
         if dirpath != '':
             abspath = lepath.abs(dirpath)
-            abspath_cdtb = lepath.abs(hash_helper.CDTBHashes.local_dir)
-            abspath_extracted = lepath.abs(hash_helper.ExtractedHashes.local_dir)
-            abspath_custom = lepath.abs(hash_helper.CustomHashes.local_dir)
+            abspath_cdtb = lepath.abs(hash_helper.local_cdtb)
+            abspath_extracted = lepath.abs(hash_helper.local_extracted)
             if hash_id == 0:
-                if abspath in (abspath_extracted, abspath_custom):
-                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as another hash path. All hash paths must be different.')
-                hash_helper.CDTBHashes.local_dir = abspath
-                setting.set('CDTBHashes.local_dir', abspath)
-            elif hash_id == 1:
-                if abspath in (abspath_cdtb, abspath_custom):
-                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as another hash path. All hash paths must be different.')
-                hash_helper.ExtractedHashes.local_dir = abspath
-                setting.set('ExtractedHashes.local_dir', abspath)
+                if abspath == abspath_extracted:
+                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as extracted hash path.')
+                hash_helper.apply_basedir(abspath, hash_helper.local_extracted)
+                setting.set('hash_hepler.local_cdtb', abspath)
             else:
-                if abspath in (abspath_cdtb, abspath_extracted):
-                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as another hash path. All hash paths must be different.')
-                hash_helper.CustomHashes.local_dir = abspath
-                setting.set('CustomHashes.local_dir', abspath)
+                if abspath == abspath_cdtb:
+                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as cdtb hash path.')
+                hash_helper.apply_basedir(hash_helper.local_cdtb, abspath)
+                setting.set('hash_helper.local_extracted', abspath)
             setting.save()
             label.setText(f'📖 {hash_name}: {get_hash_size(hash_id)}] {get_hash_path(hash_id)}')
 
     def open_hash_path(hash_id):
-        if hash_id == 0:
-            os.startfile(lepath.abs(hash_helper.CDTBHashes.local_dir))
-        elif hash_id == 1:
-            os.startfile(lepath.abs(hash_helper.ExtractedHashes.local_dir))
-        else:
-            os.startfile(lepath.abs(hash_helper.CustomHashes.local_dir))
+        os.startfile(lepath.abs(hash_helper.local_cdtb) if hash_id == 0 else lepath.abs(hash_helper.local_extracted))
     
-    for hash_id, hash_name in enumerate(['CDTB', 'Extracted', 'Custom']):
+    for hash_id, hash_name in enumerate(('CDTB', 'Extracted')):
         layout2 = QHBoxLayout()
         label = QLabel(f'📖 {hash_name}: [{get_hash_size(hash_id)}] {get_hash_path(hash_id)}')
         layout2.addWidget(label, stretch=8)
@@ -996,12 +975,8 @@ def build_hash_helper(widget: QWidget):
 
     layout2 = QHBoxLayout()
     button = QToolButton()
-    button.setText('❌ Reset Custom hash to CDTB hash')
-    button.clicked.connect(lambda event: hash_helper.CustomHashes.reset_custom_hashes(*hash_helper.ALL_HASHES))
-    layout2.addWidget(button)
-    button = QToolButton()
     button.setText('❌ Clear Extract hash')
-    button.clicked.connect(lambda event: hash_helper.ExtractedHashes.clear_extract_hashes(*hash_helper.ALL_HASHES))
+    button.clicked.connect(hash_helper.clear_extracted)
     layout2.addWidget(button)
     layout2.addStretch()
     layout.addLayout(layout2)
@@ -1033,7 +1008,7 @@ def build_hash_helper(widget: QWidget):
         if  final_path_count > 0:
             def extract_thrd():
                 print(f'hash_helper: Start: Extract hashes with {final_path_count} items.')
-                hash_helper.ExtractedHashes.extract(*final_paths)
+                hash_helper.extract(*final_paths)
                 print('hash_helper: Finish: Extract hashes.')
             helper.SafeThread.start('hash_helper', extract_thrd)
 
@@ -1061,17 +1036,19 @@ def build_hash_helper(widget: QWidget):
     layout3 = QVBoxLayout()
     layout4 = QHBoxLayout()
     def add_bin_hash(binhash_name):
-        raws = [text for text in textedit.toPlainText().split('\n') if text != '']
-        hashes =  [text for text in textedit2.toPlainText().split('\n') if text != '']
-        raw_count = len(raws)
-        if raw_count > 0:
-            filename = f'hashes.bin{binhash_name.lower()}.txt'
-            hash_helper.CustomHashes.read_hashes(filename)
-            for i in range(len(raws)):
-                hash_helper.Storage.hashtables[filename][hashes[i]] = raws[i]
-            hash_helper.CustomHashes.write_hashes(filename)
-            hash_helper.CustomHashes.free_hashes(filename)
-            print(f'hash_helper: Finish: Add {raw_count} hashes to {filename} of custom hash.')
+        rs = [text for text in textedit.toPlainText().split('\n') if text != '']
+        hs =  [text for text in textedit2.toPlainText().split('\n') if text != '']
+        if len(rs) > 0:
+            # read existed 
+            hashes = {}
+            filehash = rf'{hash_helper.local_extracted}\hashes.bin{binhash_name.lower()}.txt'
+            hash_helper.read_hash(hashes, filehash, hash_helper.bsl1, hash_helper.bsl2)
+            # add 
+            for r, h in zip(rs, hs):
+                hashes[int(h, 16)] = r
+            # write 
+            hash_helper.write_hash(hashes, filehash, 8)
+            print(f'hash_helper: Finish: Add {len(rs)} hashes to: {filehash}.')
     for binhash_name in ['Entries', 'Fields', 'Types', 'Hashes']:
         button = QToolButton()
         button.setText('✍️ '+binhash_name)
@@ -1086,7 +1063,7 @@ def build_hash_helper(widget: QWidget):
     layout.addLayout(layout2)
     def input_text():
         textedit2.clear()
-        textedit2.setPlainText('\n'.join([pyRitoFile.bin.BINHasher.raw_to_hex(text) if text != '' else '' for text in textedit.toPlainText().split('\n')]))
+        textedit2.setPlainText('\n'.join([f'{hash_helper.bin_hashes[text]:08x}' if text != '' else '' for text in textedit.toPlainText().split('\n')]))
     textedit.textChanged.connect(input_text)
     
     # generate wad hash
@@ -1101,17 +1078,19 @@ def build_hash_helper(widget: QWidget):
     layout3 = QVBoxLayout()
     layout4 = QHBoxLayout()
     def add_wad_hash(wadhash_name):
-        raws = [text for text in textedit3.toPlainText().split('\n') if text != '']
-        hashes =  [text for text in textedit4.toPlainText().split('\n') if text != '']
-        raw_count = len(raws)
-        if raw_count > 0:
-            filename = f'hashes.{wadhash_name.lower()}.txt'
-            hash_helper.CustomHashes.read_hashes(filename)
-            for i in range(len(raws)):
-                hash_helper.Storage.hashtables[filename][hashes[i]] = raws[i]
-            hash_helper.CustomHashes.write_hashes(filename)
-            hash_helper.CustomHashes.free_hashes(filename)
-            print(f'hash_helper: Finish: Add {raw_count} hashes to {filename} of custom hash.')
+        rs = [text for text in textedit.toPlainText().split('\n') if text != '']
+        hs =  [text for text in textedit2.toPlainText().split('\n') if text != '']
+        if len(rs) > 0:
+            # read existed 
+            hashes = {}
+            filehash = rf'{hash_helper.local_extracted}\hashes.{wadhash_name.lower()}.txt'
+            hash_helper.read_hash(hashes, filehash, hash_helper.wsl1, hash_helper.wsl2)
+            # add 
+            for r, h in zip(rs, hs):
+                hashes[int(h, 16)] = r
+            # write 
+            hash_helper.write_hash(hashes, filehash, 16)
+            print(f'hash_helper: Finish: Add {len(rs)} hashes to: {filehash}.')
     for wadhash_name in ['Game', 'Lcu']:
         button = QToolButton()
         button.setText('✍️ '+wadhash_name)
@@ -1126,7 +1105,7 @@ def build_hash_helper(widget: QWidget):
     layout.addLayout(layout2)
     def input_text():
         textedit4.clear()
-        textedit4.setPlainText('\n'.join([pyRitoFile.wad.WADHasher.raw_to_hex(text) if text != '' else '' for text in textedit3.toPlainText().split('\n')]))
+        textedit4.setPlainText('\n'.join([f'{hash_helper.wad_hashes[text]:016x}' if text != '' else '' for text in textedit3.toPlainText().split('\n')]))
     textedit3.textChanged.connect(input_text)
 
 
@@ -1143,7 +1122,7 @@ def build_hash_helper(widget: QWidget):
                 files.append(path)
         def extract_thrd():
             print(f'hash_helper: Start: Extract hashes with {len(files)} items.')
-            hash_helper.ExtractedHashes.extract(*files)
+            hash_helper.extract(*files)
             print('hash_helper: Finish: Extract hashes.')
         helper.SafeThread.start('hash_helper', extract_thrd) 
     helper.link_dnd_cmd(widget, dnd_cmd)

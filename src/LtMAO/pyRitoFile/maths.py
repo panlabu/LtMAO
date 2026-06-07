@@ -1,5 +1,10 @@
 from math import sqrt, acos, sin
 
+try:
+    from xxhash import xxh64_intdigest, xxh3_64_intdigest as hash_xxh3_64
+except:
+    print('Warning: pyRitoFile.maths failed to import xxhash.')
+
 def hash_elf(s):
     h = 0
     m = 0xF0000000
@@ -26,6 +31,9 @@ def hash_fnv1(s):
     for b in s.encode().lower():
         h = h * p & m ^ b
     return h
+
+def hash_xxh64(s):
+    return xxh64_intdigest(s.lower())
 
 def vector3_lerp(a, b, weight):   
     x1, y1, z1 = a
@@ -63,7 +71,7 @@ def quaternion_compress(quat):
     abs_quat = [abs(v) for v in quat]
     max_index = abs_quat.index(max(abs_quat))
     if quat[max_index] < 0:
-        quat = tuple(-v for v in quat)
+        quat = [-v for v in quat]
     bits = max_index << 45
     s = 1.41421356237 # sqrt(2)
     c = 0

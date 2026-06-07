@@ -1,5 +1,4 @@
-from .stream import BytesStream
-from ..pyRitoFile.structs import Vector
+from io import BytesIO
 from enum import Enum, IntFlag
 
 class MAPGEOPlanarReflector:
@@ -271,15 +270,15 @@ class MAPGEOHelper:
     MGVertexFormatToPyValues = {
         # mapgeo vertex format: (python struct format, bytes size, python items size, type of items)
         MAPGEOVertexElementFormat.X_Float32: ('f', 4, 1, float),  
-        MAPGEOVertexElementFormat.XY_Float32: ('2f', 8, 2, Vector),  
-        MAPGEOVertexElementFormat.XYZ_Float32: ('3f', 12, 3, Vector), 
-        MAPGEOVertexElementFormat.XYZW_Float32: ('4f', 16, 4, Vector),  
+        MAPGEOVertexElementFormat.XY_Float32: ('2f', 8, 2, tuple),  
+        MAPGEOVertexElementFormat.XYZ_Float32: ('3f', 12, 3, tuple), 
+        MAPGEOVertexElementFormat.XYZW_Float32: ('4f', 16, 4, tuple),  
         MAPGEOVertexElementFormat.BGRA_Packed8888: ('4B', 4, 4, tuple), 
         MAPGEOVertexElementFormat.ZYXW_Packed8888: ('4B', 4, 4, tuple), 
         MAPGEOVertexElementFormat.RGBA_Packed8888: ('4B', 4, 4, tuple), 
-        MAPGEOVertexElementFormat.XY_Packed1616: ('2e', 4, 2, Vector),
-        MAPGEOVertexElementFormat.XYZ_Packed161616: ('4e', 8, 4, Vector), # yes its 8 bytes not 6, +2 for padding
-        MAPGEOVertexElementFormat.XYZW_Packed16161616: ('4e', 8, 4, Vector)  
+        MAPGEOVertexElementFormat.XY_Packed1616: ('2e', 4, 2, tuple),
+        MAPGEOVertexElementFormat.XYZ_Packed161616: ('4e', 8, 4, tuple), # yes its 8 bytes not 6, +2 for padding
+        MAPGEOVertexElementFormat.XYZW_Packed16161616: ('4e', 8, 4, tuple)  
     }
 
 class MAPGEO:
@@ -301,7 +300,7 @@ class MAPGEO:
         return {key: getattr(self, key) for key in self.__slots__}
     
     def read(self, path, raw=False):
-        with BytesStream.reader(path, raw) as bs:
+        with BytesIO(path) as bs:
             self.signature, = bs.read_s(4)
             if self.signature != 'OEGM':
                 raise Exception(
@@ -556,7 +555,7 @@ class MAPGEO:
                 f'pyRitoFile: Error: Write MAPGEO {path}: Unsupported file version: {version}')
         self.version = version
 
-        with BytesStream.writer(path, raw) as bs:
+        with BytesIO(path) as bs:
             # prepare stuffs
             self.vertex_descriptions = []
             vertex_buffers = []
@@ -640,8 +639,8 @@ class MAPGEO:
                 vertex_size = vertex_size * len(model.vertices)
                 # vertex values
                 vertex_values = []
-                boudingbox_min = Vector(float("inf"), float("inf"), float("inf"))
-                boudingbox_max = Vector(float("-inf"), float("-inf"), float("-inf"))
+                boudingbox_min = (0, 0, 0) # need fix
+                boudingbox_max = (0, 0, 0) # need fix
                 for vertex in model.vertices:
                     for element in vertex_description.elements:
                         vertex_value = vertex.value[element.name]

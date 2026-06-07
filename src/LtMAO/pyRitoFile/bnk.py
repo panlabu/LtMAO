@@ -1,4 +1,4 @@
-from .stream import BytesStream
+from io import BytesIO
 from enum import Enum
 
 class BNKHelper:
@@ -193,7 +193,7 @@ class BNK:
         return {key: getattr(self, key) for key in self.__slots__}
 
     def read(self, path, raw=False):
-        with BytesStream.reader(path, raw) as bs:
+        with BytesIO(path) as bs:
             self.unknown_sections = []
             while bs.tell() < bs.end():
                 section = BNKSection()
@@ -344,7 +344,7 @@ class BNK:
             return self
         
     def write(self, path, wem_datas, raw=False):
-        with BytesStream.writer(path, raw) as bs:
+        with BytesIO(path) as bs:
             # write bkhd
             # signature, size, version, id, unknown 24 bytes
             bs.write_s('BKHD')

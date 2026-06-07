@@ -1,40 +1,42 @@
-from bisect import bisect
 from struct import unpack, iter_unpack, pack
 from io import BytesIO
-from dataclasses import dataclass
 from .maths import hash_elf, vector3_lerp, quaternion_decompress, quaternion_compress, quaternion_slerp
 
 
-@dataclass(slots=True)
 class Track:
-    # keyframe: transform
-    translate_curve: dict[float, tuple[float, float, float]]
-    rotate_curve: dict[float, tuple[float, float, float, float]]
-    scale_curve: dict[float, tuple[float, float, float]]
+    __slots__ = ('translate_curve', 'rotate_curve', 'scale_curve')
+    
+    def __init__(self, translate_curve, rotate_curve, scale_curve):
+        self.translate_curve = translate_curve
+        self.rotate_curve = rotate_curve
+        self.scale_curve = scale_curve
 
-@dataclass(slots=True)
 class Animation:
-    signature: bytes
-    file_size: int
-    version: int
-    format_token: int
-    flags1: int
-    flags2: int
-    keyframe_count: float
-    fps: float
-    error_metrics: tuple[
-        tuple[float, float], # rotate
-        tuple[float, float], # translate
-        tuple[float, float]  # scale
-    ]
-    tracks: dict[int, Track] # joint hash: track
+    __slots__ = (
+        'signature', 'file_size', 'version', 'format_token', 
+        'flags1', 'flags2', 'keyframe_count', 'fps', 
+        'error_metrics', 'tracks'
+    )
+    
+    def __init__(self, signature, file_size, version, format_token, flags1, flags2, keyframe_count, fps, error_metrics, tracks):
+        self.signature = signature
+        self.file_size = file_size
+        self.version = version
+        self.format_token = format_token
+        self.flags1 = flags1
+        self.flags2 = flags2
+        self.keyframe_count = keyframe_count
+        self.fps = fps
+        self.error_metrics = error_metrics
+        self.tracks = tracks
+
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
         # header
         signature = bs.read(8)
-        version, = unpack('<I', bs.read(4))
+        version = int.from_bytes(bs.read(4), 'little')
 
         if signature == b'r3d2canm':
             # compressed
@@ -173,8 +175,8 @@ def read(path):
                     for i in range(0, len(unpacked_floats), 7):
                         # each 7 floats is translate and rotate at one keyframe
                         keyframe = i // 7
-                        track.rotate_curve[keyframe] = unpacked_floats[i:i+3]
-                        track.translate_curve[keyframe] = unpacked_floats[i+4:i+6]
+                        track.rotate_curve[keyframe] = unpacked_floats[i:i+4]
+                        track.translate_curve[keyframe] = unpacked_floats[i+4:i+7]
                         track.scale_curve[keyframe] = (1.0, 1.0, 1.0)
             else:
                 raise Exception(f'pyRitoFile: Error: Read ANM: Unsupported file version: {version}')
@@ -321,4 +323,4 @@ def write(animation, path=None):
         file_size = bs.tell()
         bs.seek(12) 
         bs.write(pack('<I', file_size))
-    return stream.getvalue() if path is None else None
+        return stream.getvalue() if path is None else None

@@ -146,7 +146,7 @@ def build_main():
         print('qtGUI: Finish: Sync changelog.')
     helper.SafeThread.start('sync_changelog', lambda: sync_changelog(app.changelog))
     # sync hashes
-    helper.SafeThread.start('sync_ctdb_hashes', hash_helper.CDTBHashes.sync_all)
+    helper.SafeThread.start('sync_ctdb_hashes', hash_helper.sync_hashes)
 
 
 def build_grips():
