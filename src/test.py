@@ -1,8 +1,8 @@
 import cProfile, pstats
-from LtMAO import hash_helper
+from LtMAO import hash_helper, lepath
 
 def test():
-    hash_helper.extract('D:/Map11.wad.client')
+    print(lepath.abs('D:/'))
     
 def db(func):
     with cProfile.Profile() as profile:
@@ -11,4 +11,4 @@ def db(func):
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
 
-db(test)
+test()

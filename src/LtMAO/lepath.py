@@ -1,7 +1,10 @@
-import os
-from os.path import (
+import os, os.path
+
+from operator import methodcaller
+force_posix = methodcaller('replace', '\\', '/')
+
+from posixpath import (
     join as join, 
-    abspath as abs, 
     relpath as rel,
     getsize as getsize,
     exists as exists,
@@ -9,14 +12,23 @@ from os.path import (
     split as split
 )
 
+def abs(path):
+    return force_posix(os.path.abspath(path))
+
+def prefix(prefix, path):
+    dirname, basename = split(path)
+    return join(dirname, prefix + basename)
+
+def ensure_ext(path, ext):
+    return path if path.endswith(ext) else path + ext
 
 def ext(path, old, new):
     return path.removesuffix(old) + new
 
-def walk(path, fitler_func, topdown=True):
+def walk(path, filter_func=None, topdown=True):
     return [
-        join(root, file)
+        force_posix(join(root, file))
         for root, dirs, files in os.walk(path, topdown)
         for file in files
-        if fitler_func(file)
+        if filter_func is None or filter_func(file)
     ]

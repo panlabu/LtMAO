@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QL
 
 import requests, os
 from . import helper, control
-from .. import setting, hash_helper
+from .. import stash, hash_helper
 
 
 app = None
@@ -12,7 +12,7 @@ app = None
 def build_main():
     # build main window
     app.main = window = QMainWindow()
-    geometry = setting.get('qtGUI.geometry', [0, 0, 1280, 800])
+    geometry = stash.fetch('qtGUI.geometry', [0, 0, 1280, 800])
     window.setGeometry(*geometry)
     window.setWindowIcon(QPixmap(app.theme_paths['appicon']))
     window.setWindowFlags(Qt.Window|Qt.FramelessWindowHint|Qt.WindowMinMaxButtonsHint)
@@ -26,7 +26,7 @@ def build_main():
     # build background widget
     app.background_widget = background_widget = QLabel()
     background_widget.setObjectName('backgroundWidget')
-    if setting.get('qtGUI.animated_background', True):
+    if stash.fetch('qtGUI.animated_background', True):
         movie = QMovie(app.theme_paths['background'])
         background_widget.setMovie(movie)
         background_widget.setScaledContents(True)
@@ -100,7 +100,7 @@ def build_main():
 
     # after build
     helper.link_main_window(app.logbox, app.statusbar)
-    control.on_page_id_changed(True, setting.get('qtGUI.page_id', 0))
+    control.on_page_id_changed(True, stash.fetch('qtGUI.page_id', 0))
     # check version
     def check_version(label):
         try:
@@ -176,8 +176,8 @@ def build_grips():
         def mouseReleaseEvent(event):
             edge_grip.mousePos = None
             geometry = app.main.geometry()
-            setting.set('qtGUI.geometry', [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
-            setting.save()
+            stash.store('qtGUI.geometry', [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
+            stash.save()
             event.accept()
         edge_grip.mousePressEvent = mousePressEvent
         edge_grip.mouseMoveEvent = mouseMoveEvent
@@ -190,8 +190,8 @@ def build_grips():
         corner_grip.setStyleSheet('background-color: transparent')
         def mouseReleaseEvent(event):
             geometry = app.main.geometry()
-            setting.set('qtGUI.geometry', [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
-            setting.save()
+            stash.store('qtGUI.geometry', [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
+            stash.save()
             event.accept()
         corner_grip.mouseReleaseEvent = mouseReleaseEvent
         return corner_grip
@@ -308,8 +308,8 @@ def build_title_bar():
     def mouseReleaseEvent(event):
         title_widget.initial_pos = None
         geometry = app.main.geometry()
-        setting.set('qtGUI.geometry', [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
-        setting.save()
+        stash.store('qtGUI.geometry', [geometry.x(), geometry.y(), geometry.width(), geometry.height()])
+        stash.save()
         event.accept()
     title_widget.mouseReleaseEvent = mouseReleaseEvent
 

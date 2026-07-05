@@ -1,5 +1,5 @@
 from io import BytesIO
-from struct import unpack, pack
+from struct import unpack, pack, error as StructError
 
 btype_names = {
     # basic
@@ -24,7 +24,7 @@ btype_names = {
     18: 'file',
     # complex
     128: 'list',
-    129: 'list2',
+    129: 'list2', 
     130: 'pointer',
     131: 'embed',
     132: 'link',
@@ -33,7 +33,13 @@ btype_names = {
     135: 'flag'
 }
 
-    
+# modern: exact as above
+modern_types = [*range(256)]
+# legacy: did not have list2, every complex after list is down by 1
+legacy_types = [i+1 if i > 128 else i for i in modern_types] 
+# ancient: did not have file, complex is start at 18
+ancient_types = [(128 if i == 18 else i + 111) if i > 17 else i for i in modern_types]
+
 
 def is_hex(s):
     if len(s) != 8: return False
@@ -43,26 +49,70 @@ def is_hex(s):
     except:
         return False
 
-def unhash(bin, hashtable):
+def flatten(binary):
+    # init
+    flat_fields = []
+    flat_extend = flat_fields.extend
+    list_types = {128, 129}
+    embed_types = {130, 131}
+    option_type = 133
+    map_type = 134
+    target_types = list_types | embed_types | {option_type, map_type}
+    def flat_data(data_type, data):
+        if data_type in list_types:
+            value_type, values = data
+            for value in values:
+                flat_data(value_type, value)
+        if data_type in embed_types:
+            (_, _), fields = data
+            flat_extend(fields)
+            for field in fields:
+                flat_data(field.data_type, field.data)
+        if data_type == option_type:
+            value_type, value = data
+            if value is not None:
+                flat_data(value_type, value)
+        if data_type == map_type:
+            key_type, value_type, pairs = data
+            for key, value in pairs.items():
+                flat_data(key_type, key)
+                flat_data(value_type, value)
+    # main
+    for entry in binary.entries:
+        flat_extend(entry.fields)
+        for field in entry.fields:
+            if field.data_type in target_types:
+                flat_data(field.data_type, field.data)
+    if binary.is_patch:
+        for patch in binary.patches:
+            if patch.data_type in target_types:
+                flat_data(patch.data_type, patch.data)
+    return flat_fields
+
+def unhash(binary, lookup):
+    # init
+    if binary.flat_fields is None:
+        binary.flat_fields = flatten(binary)
     hashed_types = {17, 18, 132}
     list_types = {128, 129}
     embed_types = {130, 131}
     option_type = 133
     map_type = 134
-    get = hashtable.get
-
+    target_types = hashed_types | list_types | embed_types | {option_type, map_type}
     def unhash_data(data_type, data):
         if data_type in hashed_types:
-            return get(data, f'{data:08x}')
+            return lookup(data, f'{data:08x}')
         if data_type in list_types:
             value_type, values = data
             return (value_type, [unhash_data(value_type, value) for value in values])
         if data_type in embed_types:
-            (class_hash, _class_hash), fields = data
-            return ((class_hash, get(class_hash, f'{class_hash:08x}')), [] if class_hash == 0 else [unhash_field(field) for field in fields])
+            (class_hash, _), fields = data
+            if class_hash != 0:
+                return ((class_hash, lookup(class_hash, f'{class_hash:08x}')), fields)
         if data_type == option_type:
             value_type, value = data
-            return (value_type, None if value is None else unhash_data(value_type, value))
+            if value is not None:
+                return (value_type, unhash_data(value_type, value))
         if data_type == map_type:
             key_type, value_type, pairs = data
             return (
@@ -71,20 +121,19 @@ def unhash(bin, hashtable):
                 {unhash_data(key_type, key): unhash_data(value_type, value) for key, value in pairs.items()}
             )
         return data
-
-    def unhash_field(field):
-        field._hash = get(field.hash, f'{field.hash:08x}')
-        field.data = unhash_data(field.data_type, field.data)
-        return field
-
-    for entry in bin.entries:
-        entry._hash = get(entry.hash, f'{entry.hash:08x}')
-        entry._class_hash = get(entry.class_hash, f'{entry.class_hash:08x}')
-        entry.data = [unhash_field(field) for field in entry.fields]
-    if bin.is_patch:
-        for patch in bin.patches:
-            patch._hash = get(patch.hash, f'{patch.hash:08x}')
-            patch.data = unhash_data(patch.data_type, patch.data)
+    # main 
+    for entry in binary.entries:
+        entry._hash = lookup(entry.hash, f'{entry.hash:08x}')
+        entry._class_hash = lookup(entry.class_hash, f'{entry.class_hash:08x}')
+    for field in binary.flat_fields:
+        field._hash = lookup(field.hash, f'{field.hash:08x}')
+        if field.data_type in target_types:
+            field.data = unhash_data(field.data_type, field.data)
+    if binary.is_patch:
+        for patch in binary.patches:
+            patch._hash = lookup(patch.hash, f'{patch.hash:08x}')
+            if patch.data_type in target_types:
+                patch.data = unhash_data(patch.data_type, patch.data)
 
 
 class Field:
@@ -116,8 +165,8 @@ class Patch:
         self.data = data
 
 
-class Bin:
-    __slots__ = ('signature', 'version', 'is_patch', 'links', 'entries', 'patches')
+class Binary:
+    __slots__ = ('signature', 'version', 'is_patch', 'links', 'entries', 'patches', 'flat_fields')
     def __init__(self, signature, version, is_patch, links, entries, patches):
         self.signature = signature
         self.version = version
@@ -125,109 +174,132 @@ class Bin:
         self.links = links
         self.entries = entries
         self.patches = patches
+        self.flat_fields = None
 
+# read funcs
+def read_none(bs): return None
+def read_bool(bs): return bs.read(1)[0] != 0
+def read_i8(bs): return b - 256 if (b:=bs.read(1)[0]) >= 128 else b
+def read_u8(bs): return bs.read(1)[0]
+def read_i16(bs): return int.from_bytes(bs.read(2), 'little', signed=True)
+def read_u16(bs): return int.from_bytes(bs.read(2), 'little')
+def read_i32(bs): return int.from_bytes(bs.read(4), 'little', signed=True)
+def read_u32(bs): return int.from_bytes(bs.read(4), 'little')
+def read_i64(bs): return int.from_bytes(bs.read(8), 'little', signed=True)
+def read_u64(bs): return int.from_bytes(bs.read(8), 'little')
+def read_f32(bs): return unpack('<f', bs.read(4))[0]
+def read_vec2(bs): return unpack('<2f', bs.read(8))
+def read_vec3(bs): return unpack('<3f', bs.read(12))
+def read_vec4(bs): return unpack('<4f', bs.read(16))
+def read_mtx44(bs): return unpack('<16f', bs.read(64))                          
+def read_rgba(bs): return unpack('<4B', bs.read(4))
+def read_string(bs): return bs.read(int.from_bytes(bs.read(2), 'little')).decode()
+def read_hash(bs): return int.from_bytes(bs.read(4), 'little')
+def read_file(bs): return int.from_bytes(bs.read(8), 'little')
+def read_list(bs):
+    value_type, value_count = unpack('<B4xI', bs.read(9))
+    vt = bs.btypes[value_type]
+    read_data_vt = read_data[vt]
+    return (
+        vt, 
+        [read_data_vt(bs) for _ in range(value_count)
+    ]
+)
+def read_embed(bs):
+    class_hash = int.from_bytes(bs.read(4), 'little')
+    if class_hash == 0:
+        return ((class_hash, None), [])
+    else:
+        field_count, = unpack('<4xH', bs.read(6))
+        return (
+            (class_hash, None), 
+            [
+                Field(
+                    field_hash, None,
+                    dt:=bs.btypes[data_type],
+                    read_data[dt](bs)
+                )
+                for _ in range(field_count)
+                for field_hash, data_type in [unpack('<IB', bs.read(5))]
+            ]
+        )
+def read_link(bs): return int.from_bytes(bs.read(4), 'little')
+def read_option(bs):
+    value_type, value_count = unpack('<2B', bs.read(2))
+    return (
+        vt:=bs.btypes[value_type], 
+        None if value_count == 0 else read_data[vt](bs)
+    )
+def read_map(bs):
+    key_type, value_type, pair_count = unpack('<2B4xI', bs.read(10))
+    kt = bs.btypes[key_type]
+    vt = bs.btypes[value_type]
+    read_data_kt = read_data[kt]
+    read_data_vt = read_data[vt]
+    return (
+        kt, vt, 
+        {read_data_kt(bs): read_data_vt(bs) for _ in range(pair_count)}
+    )
+def read_flag(bs): return bs.read(1)[0]
+# list 
+def read_error(bs): raise ValueError
+read_data = [
+    read_none,
+    read_bool,
+    read_i8,
+    read_u8,
+    read_i16,
+    read_u16,
+    read_i32,
+    read_u32,
+    read_i64,
+    read_u64,
+    read_f32,
+    read_vec2,
+    read_vec3,
+    read_vec4,
+    read_mtx44,
+    read_rgba,
+    read_string,
+    read_hash,
+    read_file,
+    *[read_error]*109, # pad
+    read_list,
+    read_list,
+    read_embed,
+    read_embed,
+    read_link,
+    read_option,
+    read_map,
+    read_flag,
+    *[read_error]*120 # pad
+]
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
-        # init stuff to read
+        # init 
         is_patch = False
         links = []
         patches = []
-        legacy = False
-        # some func
-        def fix_type(btype): return btype+1 if legacy and btype > 128 else btype
-        # basic
-        def read_none(): return None
-        def read_bool(): return bs.read(1)[0] != 0
-        def read_i8(): return b - 256 if (b:=bs.read(1)[0]) >= 128 else b
-        def read_u8(): return bs.read(1)[0]
-        def read_i16(): return int.from_bytes(bs.read(2), 'little', signed=True)
-        def read_u16(): return int.from_bytes(bs.read(2), 'little')
-        def read_i32(): return int.from_bytes(bs.read(4), 'little', signed=True)
-        def read_u32(): return int.from_bytes(bs.read(4), 'little')
-        def read_i64(): return int.from_bytes(bs.read(8), 'little', signed=True)
-        def read_u64(): return int.from_bytes(bs.read(8), 'little')
-        def read_f32(): return unpack('<f', bs.read(4))[0]
-        def read_vec2(): return unpack('<2f', bs.read(8))
-        def read_vec3(): return unpack('<3f', bs.read(12))
-        def read_vec4(): return unpack('<4f', bs.read(16))
-        def read_mtx44(): return unpack('<16f', bs.read(64))                          
-        def read_rgba(): return unpack('<4B', bs.read(4))
-        def read_string(): return bs.read(int.from_bytes(bs.read(2), 'little')).decode()
-        def read_hash(): return int.from_bytes(bs.read(4), 'little')
-        def read_file(): return int.from_bytes(bs.read(8), 'little')
-        # complex
-        def read_list_list2():
-            value_type, value_count = unpack('<B4xI', bs.read(9))
-            return (
-                vt:=fix_type(value_type), 
-                [read_data[vt]() for _ in range(value_count)
-            ]
-        )
-        def read_pointer_embed():
-            class_hash = int.from_bytes(bs.read(4), 'little')
-            if class_hash == 0:
-                return ((class_hash, None), [])
-            else:
-                field_count, = unpack('<4xH', bs.read(6))
-                return (
-                    (class_hash, None), 
-                    [read_field() for _ in range(field_count)]
+        def read_entries():
+            return [
+                Entry(
+                    entry_hash, None, 
+                    class_hashes[entry_id], None,
+                    [
+                        Field(
+                            field_hash, None,
+                            dt:=bs.btypes[data_type],
+                            read_data[dt](bs)
+                        )
+                        for _ in range(field_count)
+                        for field_hash, data_type in [unpack('<IB', bs.read(5))]
+                    ]
                 )
-        def read_link(): return int.from_bytes(bs.read(4), 'little')
-        def read_option():
-            value_type, value_count = unpack('<2B', bs.read(2))
-            return (
-                vt:=fix_type(value_type), 
-                None if value_count == 0 else read_data[vt]()
-            )
-        def read_map():
-            key_type, value_type, pair_count = unpack('<2B4xI', bs.read(10))
-            return (
-                kt:=fix_type(key_type), 
-                vt:=fix_type(value_type), 
-                {read_data[kt](): read_data[vt]() for _ in range(pair_count)}
-            )
-        def read_flag(): return bs.read(1)[0]
-        # map read
-        read_data = {
-            0: read_none,
-            1: read_bool,
-            2: read_i8,
-            3: read_u8,
-            4: read_i16,
-            5: read_u16,
-            6: read_i32,
-            7: read_u32,
-            8: read_i64,
-            9: read_u64,
-            10: read_f32,
-            11: read_vec2,
-            12: read_vec3,
-            13: read_vec4,
-            14: read_mtx44,
-            15: read_rgba,
-            16: read_string,
-            17: read_hash,
-            18: read_file,
-            128: read_list_list2,
-            129: read_list_list2,
-            130: read_pointer_embed,
-            131: read_pointer_embed,
-            132: read_link,
-            133: read_option,
-            134: read_map,
-            135: read_flag
-        }
-        # field
-        def read_field():
-            hash, data_type = unpack('<IB', bs.read(5))
-            return Field(
-                hash, None, 
-                dt:=fix_type(data_type), 
-                read_data[dt]()
-            )
+                for entry_id in range(entry_count)
+                for entry_hash, field_count in [unpack('<4xIH', bs.read(10))]
+            ]
         # header
         signature = bs.read(4)
         if signature not in {b'PROP', b'PTCH'}:
@@ -251,47 +323,37 @@ def read(path):
         entry_count = int.from_bytes(bs.read(4), 'little')
         class_hashes = unpack(f'<{entry_count}I', bs.read(entry_count*4))
         entry_offset = bs.tell()
+        FallbackError = (IndexError, TypeError, ValueError, StructError, MemoryError)
         try:
-            # try read as new bin
-            entries = [
-                Entry(
-                    hash, None, 
-                    class_hashes[entry_id], None,
-                    [read_field() for i in range(field_count)]
-                )
-                for entry_id in range(entry_count)
-                for hash, field_count in [unpack('<4xIH', bs.read(10))]
-            ]
-        except ValueError:
-            # legacy bin, fall back
-            bs.seek(entry_offset)
-            legacy = True
-            entries = [
-                Entry(
-                    hash, None, 
-                    class_hashes[entry_id], None,
-                    [read_field() for i in range(field_count)]
-                )
-                for entry_id in range(entry_count)
-                for hash, field_count in [unpack('<4xIH', bs.read(10))]
-            ]
-        except Exception as e:
-            raise e
+            bs.btypes = modern_types
+            # read as modern bin
+            entries = read_entries()
+        except FallbackError:
+            try:
+                bs.seek(entry_offset)
+                bs.btypes = legacy_types
+                # read as legacy bin
+                entries = read_entries()
+            except FallbackError:
+                bs.seek(entry_offset)
+                bs.btypes = ancient_types
+                # read as ancient bin
+                entries = read_entries()
         # patches
         if is_patch and version >= 3:
             patch_count = int.from_bytes(bs.read(4), 'little')
             patches = [
                 Patch(
-                    hash, None, 
+                    patch_hash, None, 
                     bs.read(int.from_bytes(bs.read(2), 'little')).decode(), 
-                    dt:=fix_type(data_type),
-                    read_data[dt]()
+                    dt:=bs.btypes[data_type],
+                    read_data[dt](bs)
                 )
                 for i in range(patch_count)
-                for hash, data_type in [unpack('<I4xB', bs.read(9))]
+                for patch_hash, data_type in [unpack('<I4xB', bs.read(9))]
             ]
 
-    return Bin(
+    return Binary(
         signature, 
         version,
         is_patch,
@@ -299,136 +361,148 @@ def read(path):
         entries,
         patches
     )
-    
-def write(bin, path=None):
-    stream = BytesIO() if path is None else open(path, 'wb') 
-    with stream as bs:
-        # init
-        # basic
-        def write_none(data): return b''
-        def write_bool(data): return pack('<?', data)
-        def write_i8(data): return pack('<b', data)
-        def write_u8(data): return pack('<B', data)
-        def write_i16(data): return pack('<h', data)
-        def write_u16(data): return pack('<H', data)
-        def write_i32(data): return pack('<i', data)
-        def write_u32(data): return pack('<I', data)
-        def write_i64(data): return pack('<q', data)
-        def write_u64(data): return pack('<Q', data)
-        def write_f32(data): return pack('<f', data)
-        def write_vec2(data): return pack('<2f', *data)
-        def write_vec3(data): return pack('<3f', *data)
-        def write_vec4(data): return pack('<4f', *data)
-        def write_mtx44(data): return pack('<16f', *data)
-        def write_rgba(data): return pack('<4B', *data)
-        def write_string(data): return pack('<H', len(b:=data.encode())) + b
-        def write_hash(data): return pack('<I', data)
-        def write_file(data): return pack('<Q', data)
-        # complex
-        def write_list_list2(data): 
-            value_type, values = data
-            buffer = b''.join([
-                write_data[value_type](value) 
-                for value in values
-            ])
-            return pack(
-                '<B2I',
-                value_type,
-                9+len(buffer),
-                len(values)
-            ) + buffer
-        def write_pointer_embed(data): 
-            (class_hash, _class_hashh), fields = data
-            if class_hash == 0:
-                return pack('<I', class_hash)
-            else:
-                buffer = b''.join([
-                    write_field(field)
-                    for field in fields
-                ])
-                return pack(
-                    '<2IH',
-                    class_hash,
-                    10+len(buffer),
-                    len(fields)
-                ) + buffer
-        def write_link(data): return pack('<I', data)
-        def write_option(data): 
-            value_type, value = data
-            return pack(
-                '<2B',
-                value_type,
-                0 if value is None else 1
-            ) + (b'' if value is None else write_data[value_type](value))
-        def write_map(data): 
-            key_type, value_type, pairs = data
-            buffer = b''.join([
-                write_data[key_type](key) + write_data[value_type](value)
-                for key, value in pairs.items()
-            ])
-            return pack(
-                '<2B2I',
-                key_type,
-                value_type,
-                10+len(buffer),
-                len(pairs)
-            ) + buffer
-        def write_flag(data): return pack('B', data)
-        # map write 
-        write_data = {
-            0: write_none,
-            1: write_bool,
-            2: write_i8,
-            3: write_u8,
-            4: write_i16,
-            5: write_u16,
-            6: write_i32,
-            7: write_u32,
-            8: write_i64,
-            9: write_u64,
-            10: write_f32,
-            11: write_vec2,
-            12: write_vec3,
-            13: write_vec4,
-            14: write_mtx44,
-            15: write_rgba,
-            16: write_string,
-            17: write_hash,
-            18: write_file,
-            128: write_list_list2,
-            129: write_list_list2,
-            130: write_pointer_embed,
-            131: write_pointer_embed,
-            132: write_link,
-            133: write_option,
-            134: write_map,
-            135: write_flag
-        }
-        # field
-        def write_field(field):
-            return pack(
-                '<IB', 
-                field.hash, 
+
+
+# write funcs
+def write_none(data): return b''
+def write_bool(data): return pack('<?', data)
+def write_i8(data): return pack('<b', data)
+def write_u8(data): return pack('<B', data)
+def write_i16(data): return pack('<h', data)
+def write_u16(data): return pack('<H', data)
+def write_i32(data): return pack('<i', data)
+def write_u32(data): return pack('<I', data)
+def write_i64(data): return pack('<q', data)
+def write_u64(data): return pack('<Q', data)
+def write_f32(data): return pack('<f', data)
+def write_vec2(data): return pack('<2f', *data)
+def write_vec3(data): return pack('<3f', *data)
+def write_vec4(data): return pack('<4f', *data)
+def write_mtx44(data): return pack('<16f', *data)
+def write_rgba(data): return pack('<4B', *data)
+def write_string(data): return pack('<H', len(b:=data.encode())) + b
+def write_hash(data): return pack('<I', data)
+def write_file(data): return pack('<Q', data)
+def write_list_list2(data): 
+    value_type, values = data
+    write_data_vt = write_data[value_type]
+    buffer = b''.join([
+        write_data_vt(value) 
+        for value in values
+    ])
+    return pack(
+        '<B2I',
+        value_type,
+        9+len(buffer),
+        len(values)
+    ) + buffer
+def write_pointer_embed(data): 
+    (class_hash, _class_hashh), fields = data
+    if class_hash == 0:
+        return pack('<I', class_hash)
+    else:
+        buffer = b''.join([
+            pack(
+                '<IB',
+                field.hash,
                 field.data_type
             ) + write_data[field.data_type](field.data)
+            for field in fields
+        ])
+        return pack(
+            '<2IH',
+            class_hash,
+            10+len(buffer),
+            len(fields)
+        ) + buffer
+def write_link(data): return pack('<I', data)
+def write_option(data): 
+    value_type, value = data
+    if value is None:
+        return pack(
+            '<2B', 
+            value_type,
+            0
+        )
+    return pack(
+        '<2B',
+        value_type,
+        1
+    ) + write_data[value_type](value)
+def write_map(data): 
+    key_type, value_type, pairs = data
+    write_data_kt = write_data[key_type]
+    write_data_vt = write_data[value_type]
+    buffer = b''.join([
+        write_data_kt(key) + write_data_vt(value)
+        for key, value in pairs.items()
+    ])
+    return pack(
+        '<2B2I',
+        key_type,
+        value_type,
+        10+len(buffer),
+        len(pairs)
+    ) + buffer
+
+def write_flag(data): return pack('B', data)
+# list
+write_data = [
+    write_none,
+    write_bool,
+    write_i8,
+    write_u8,
+    write_i16,
+    write_u16,
+    write_i32,
+    write_u32,
+    write_i64,
+    write_u64,
+    write_f32,
+    write_vec2,
+    write_vec3,
+    write_vec4,
+    write_mtx44,
+    write_rgba,
+    write_string,
+    write_hash,
+    write_file,
+    *[write_none]*109, # pad
+    write_list_list2,
+    write_list_list2,
+    write_pointer_embed,
+    write_pointer_embed,
+    write_link,
+    write_option,
+    write_map,
+    write_flag
+]
+    
+def write(binary, path=None):
+    stream = BytesIO() if path is None else open(path, 'wb') 
+    with stream as bs:
         # header
-        if bin.is_patch:
+        if binary.is_patch:
             bs.write(pack('<4s2I', b'PTCH', 1, 0))
         bs.write(pack('<4sI', b'PROP', 3))
         # links
-        bs.write(pack('<I', len(bin.links)))
-        for link in bin.links:
+        bs.write(pack('<I', len(binary.links)))
+        for link in binary.links:
             bs.write(pack('<H', len(b:=link.encode())) + b)
         # entries
-        entry_count = len(bin.entries)
+        entry_count = len(binary.entries)
         bs.write(pack(
             f'<{entry_count+1}I', 
             entry_count, 
-            *[entry.class_hash for entry in bin.entries]
+            *[entry.class_hash for entry in binary.entries]
         ))
-        for entry in bin.entries:
+        for entry in binary.entries:
             buffer = b''.join([
-                write_field(field) 
+                pack(
+                    '<IB',
+                    field.hash,
+                    field.data_type
+                ) + write_data[field.data_type](field.data)
                 for field in entry.fields
             ])
             bs.write(pack(
@@ -439,9 +513,9 @@ def write(bin, path=None):
             ) + buffer)
 
         # patches
-        if bin.is_patch:
-            bs.write(pack('<I', len(bin.patches)))
-            for patch in bin.patches:
+        if binary.is_patch:
+            bs.write(pack('<I', len(binary.patches)))
+            for patch in binary.patches:
                 path_buffer = path.encode()
                 buffer = write_data[patch.data_type](patch.data)
                 bs.write(pack(

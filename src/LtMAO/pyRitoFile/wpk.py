@@ -1,92 +1,85 @@
 from io import BytesIO
+from struct import unpack, pack
 
-
-class WPKWem:
-    __slots__ = (
-        'id', 'offset', 'size'
-    )
-
-    def __init__(self, id=None, offset=None, size=None):
-        self.id = id
+class Wem:
+    __slots__ = ('hash', 'offset', 'size')
+    def __init__(self, hash, offset, size):
+        self.hash = hash
         self.offset = offset
         self.size = size
 
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
-    
-
-class WPK:
+class SoundPack:
     __slots__ = ('signature', 'version', 'wems')
-
-    def __init__(self, signature=None, version=None, wems=None):
+    def __init__(self, signature, version, wems):
         self.signature = signature
         self.version = version
         self.wems = wems
 
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
+def read(path):
+    stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
+    with stream as bs:
+        # header
+        signature = bs.read(4)
+        if signature != b'r3d2':
+            raise Exception(f'pyRitoFile: Error: Read WPK {path}: Wrong signature file: {signature}')
+        version = int.from_bytes(bs.read(4), 'little')
+        # info offset
+        info_offset_count = int.from_bytes(bs.read(4), 'little')
+        info_offsets = unpack(f'{info_offset_count}I', bs.read(4*info_offset_count))
+        # wems
+        wems = [
+            (
+                bs.seek(info_offset),
+                ud:=unpack('<3I', bs.read(12)),
+                Wem(
+                    int(bs.read(ud[2]*2).decode('utf-16-le')[:-4]),
+                    ud[0],
+                    ud[1]
+                )
+            )[-1]
+            for info_offset in info_offsets
+            if info_offset > 0
+        ]
 
-    def read(self, path, raw=False):
-        with BytesIO(path) as bs:
-            self.signature, = bs.read_s(4)
-            if self.signature != 'r3d2':
-                raise Exception(
-                    f'pyRitoFile: Error: Read WPK {path}: Wrong signature file: {hex(self.signature)}')
-            self.version, = bs.read_u32()
-            # read wems offset in wpk
-            wem_count, = bs.read_u32()
-            self.wems = [WPKWem() for i in range(wem_count)]
-            for wem in self.wems:
-                wem.offset, = bs.read_u32()
-            # remove any wem that has offset 0 
-            for wem in self.wems:
-                if wem.offset == 0:
-                    self.wems.remove(wem)
-            wem_count = len(self.wems)
-            # now actually read wem info 
-            for wem in self.wems:
-                bs.seek(wem.offset)
-                # update wem.offset as data offset, not wem offset in wpk
-                wem.offset, wem.size = bs.read_u32(2)
-                wem.id, = bs.read_c_sep_0(bs.read_u32()[0])
-                wem.id = int(wem.id.replace('.wem', ''))
-            
-            return self
+    return SoundPack(
+        signature,
+        version,
+        wems
+    )
 
-    def write(self, path, wem_datas, raw=False):
-        with BytesIO(path) as bs:
-            # magic, version
-            bs.write_s('r3d2')
-            bs.write_u32(1)
-            # wems offsets - write later
-            wem_count = len(self.wems)
-            bs.write_u32(wem_count)
-            for i, wem in enumerate(self.wems):
-                bs.pad(4)
-            # wem infos
-            wem_offsets = []
-            wem_data_offsets = []
-            for i, wem in enumerate(self.wems):
-                wem_offsets.append(bs.tell())
-                wem.size = len(wem_datas[i])
-                wem_data_offsets.append(bs.tell())
-                bs.pad(4)
-                bs.write_u32(wem.size)
-                wem_id = str(wem.id) + '.wem'
-                bs.write_u32(len(wem_id))
-                bs.write_c_sep_0(wem_id)
-            # wem datas
-            for i, wem_data in enumerate(wem_datas):
-                data_offset = bs.tell()
-                bs.seek(wem_data_offsets[i])
-                bs.write_u32(data_offset)
-                bs.seek(data_offset)
-                bs.write(wem_data)
-            # wem offsets
-            bs.seek(12)
-            for wem_offset in wem_offsets:
-                bs.write_u32(wem_offset)
-
-            return bs.raw() if raw else None 
-
+def write(soundpack, wem_datas, path=None):
+    stream = BytesIO() if path is None else open(path, 'wb')
+    with stream as bs:
+        # header
+        bs.write(pack('<4sI', b'r3d2', 1))
+        # pad info offset
+        wem_count = len(soundpack.wems)
+        bs.write(pack('<I', wem_count))
+        bs.seek(wem_count*4, 1)
+        # wems
+        info_offsets = [0] * wem_count
+        for i, wem in enumerate(soundpack.wems):
+            info_offsets[i] = bs.tell()
+            bs.write(
+                pack(
+                    '<3I',
+                    0, # pad data offset
+                    len(wem_datas[i]),
+                    len(b:=f'{wem.hash}.wem'.encode('utf-16-le'))
+                ) + b
+            )
+        # wem datas
+        for i, wem_data in enumerate(wem_datas):
+            data_offset = bs.tell()
+            bs.write(wem_data)
+            # go back write data offset
+            bs.seek(info_offsets[i])
+            bs.write(pack('<I', data_offset))
+            bs.seek(0, 2)
+        # go back write info offsets
+        bs.seek(12)
+        bs.write(pack(f'<{wem_count}I', *info_offsets))
         
+        return bs.getvalue() if path is None else None 
+
+    

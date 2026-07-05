@@ -10,8 +10,8 @@ def build_app():
     setup_theme('dark')
     
     # 1st load
-    from .. import setting
-    setting.init()
+    from .. import stash
+    stash.init()
 
     # set font
     id = QFontDatabase.addApplicationFont(r'.\res\font.ttf')
@@ -20,7 +20,7 @@ def build_app():
 
     # set theme func and init theme
     app.init_theme = init_theme
-    app.init_theme(setting.get('qtGUI.theme_name', 'raora'))
+    app.init_theme(stash.fetch('qtGUI.theme_name', 'raora'))
 
     # build splash first
     from . import splash

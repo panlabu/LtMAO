@@ -1,379 +1,326 @@
 from io import BytesIO
-from enum import Enum
+from struct import unpack, iter_unpack, pack
 
-class BNKHelper:
-    @staticmethod
-    def skip_fx(bs, bkhd_version):
-        bs.pad(1)
-        fx_count, = bs.read_u8()
-        if fx_count > 0:
-            bs.pad(1 + fx_count * (7 if bkhd_version <= 145 else 6))
-        if bkhd_version > 136:
-            bs.pad(1)
-            fx_count, = bs.read_u8()
-            bs.pad(fx_count * 6)
-        if bkhd_version > 89 and bkhd_version <= 145: 
-            bs.pad(1)
+object_type_names = {
+    1: 'Settings',
+    2: 'Sound',
+    3: 'Action',
+    4: 'Event',
+    5: 'Random/Sequence Container',
+    6: 'Switch Container',
+    7: 'Actor-Mixer',
+    8: 'Audio Bus',
+    9: 'Blend Container',
+    10: 'Music Segment',
+    11: 'Music Track',
+    12: 'Music Switch Container',
+    13: 'Music Playlist Container',
+    14: 'Attenuation',
+    15: 'Dialogue Event',
+    16: 'Motion Bus',
+    17: 'Motion FX',
+    18: 'Effect',
+    19: 'Auxiliary Bus',
+    20: 'Bus',
+    21: 'Modulator',
+    22: 'Acoustic Texture'
+}
 
-    @staticmethod
-    def skip_init_params(bs):
-        bs.pad(bs.read_u8()[0] * 5)
-        bs.pad(bs.read_u8()[0] * 9)
-
-    @staticmethod
-    def skip_pos_params(bs, bkhd_version):
-        pos_bits, = bs.read_u8()
-        has_pos = pos_bits & 1
-        has_3d = False
-        has_automation = False
-        if has_pos:
-            if bkhd_version <= 89:
-                has_2d, has_3d = bs.read_b(2)
-                if has_2d: bs.pad(1)
-            else:
-                has_3d = pos_bits & 2
-        if has_pos and has_3d:
-            if bkhd_version <= 89:
-                has_automation = (bs.read_u8()[0] & 3) != 1
-                bs.pad(8)
-            else:
-                has_automation = (pos_bits >> 5) & 3
-                bs.pad(1)
-        if has_automation:
-            bs.pad(9 if bkhd_version <= 89 else 5)
-            bs.pad(16 * bs.read_u32()[0])
-            bs.pad((16 if bkhd_version <= 89 else 20) * bs.read_u32()[0])
-        elif bkhd_version <= 89:
-            bs.pad(1)
-  
-    @staticmethod 
-    def skip_aux(bs, bkhd_version):
-        has_aux = (bs.read_u8()[0] >> 3) & 1
-        if has_aux: bs.pad(16)
-        if bkhd_version > 135:
-            bs.pad(4)
-
-    @staticmethod 
-    def skip_state_groups(bs):
-        bs.pad(6)
-        bs.pad(3 * bs.read_u8()[0])
-        for i in range(bs.read_u8()[0]):
-            bs.pad(5)
-            bs.pad(8 * bs.read_u8()[0])
-            
-    @staticmethod
-    def skip_rtpc(bs, bkhd_version):
-        rtpc_count, = bs.read_u16()
-        for i in range(rtpc_count):
-            bs.pad(13 if bkhd_version <= 89 else 12)
-            bs.pad(12 * bs.read_u16()[0])
-
-    @staticmethod
-    def skip_base_params(bs, bkhd_version):
-        BNKHelper.skip_fx(bs, bkhd_version)
-        
-
-        bus_id, parent_id = bs.read_u32(2)
-        bs.pad(2 if bkhd_version <= 89 else 1)
-        BNKHelper.skip_init_params(bs)
-        BNKHelper.skip_pos_params(bs, bkhd_version)
-        BNKHelper.skip_aux(bs, bkhd_version)
-        BNKHelper.skip_state_groups(bs)
-        BNKHelper.skip_rtpc(bs, bkhd_version)
-
-        return parent_id, bus_id
-    
-    @staticmethod
-    def skip_clip_automation(bs):
-        for i in range(bs.read_u32()[0]):
-            bs.pad(8)
-            bs.pad(12 * bs.read_u32()[0])
-    
-
-class BNKObjectType(Enum):
-    Settings = 1
-    Sound = 2
-    Action = 3
-    Event = 4
-    RandomOrSequenceContainer = 5
-    SwitchContainer = 6
-    ActorMixer = 7
-    AudioBus = 8
-    BlendContainer = 9
-    MusicSegment = 10
-    MusicTrack = 11
-    MusicSwitchContainer = 12
-    MusicPlaylistContainer = 13
-    Attenuation = 14
-    DialogueEvent = 15
-    MotionBus = 16
-    MotionFX = 17
-    Effect = 18
-    AuxiliaryBus = 19
-    Unknown20 = 20
-    Unknown21 = 21
-    Unknown22 = 22
-
-    def __json__(self):
-        return self.name
-
-
-class BNKObjectData:
-    def __init__(self):
-        pass
-
-    def __json__(self):
-        return vars(self)
-
-
-class BNKObject:
+class Object:
     # hirc
-    __slots__ = (
-        'id', 'type', 'size', 'data'
-    )
-
-    def __init__(self, id=None, type=None, size=None, data=None):
+    __slots__ = ('id', 'type', 'size', 'data')
+    def __init__(self, id, type, size, data):
         self.id = id
         self.type = type
         self.size = size
         self.data = data
 
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
-
-
-class BNKWem:
+class Wem:
     # didx
-    __slots__ = (
-        'id', 'offset', 'size'
-    )
-
-    def __init__(self, id=None, offset=None, size=None):
-        self.id = id
+    __slots__ = ('hash', 'offset', 'size')
+    def __init__(self, hash, offset, size):
+        self.hash = hash
         self.offset = offset
         self.size = size
 
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
+class BankHeader:
+    __slots__ = ('version', 'id')
+    def __init__(self, version, id):
+        self.version = version
+        self.id = id
 
+class DataIndex:
+    __slots__ = ('wems',)
+    def __init__(self, wems):
+        self.wems = wems
 
-class BNKSectionData:
-    def __init__(self):
-        pass
+class Data:
+    __slots__ = ('start_offset',)
+    def __init__(self, start_offset):
+        self.start_offset = start_offset
 
-    def __json__(self):
-        return vars(self)
+class Hierarchy:
+    __slots__ = ('objects',)
+    def __init__(self, objects):
+        self.objects = objects
 
+class SoundBank:
+    __slots__ = ('bkhd', 'didx', 'data', 'hirc')
 
-class BNKSection:
-    __slots__ = (
-        'signature', 'size', 'data'
-    )
-
-    def __init__(self, signature=None, size=None, data=None):
-        self.signature = signature
-        self.size = size
-        self.data = data
-
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
-
-
-class BNK:
-    __slots__ = ('bkhd', 'didx', 'data', 'hirc', 'unknown_sections')
-
-    def __init__(self, bkhd=None, didx=None, data=None, hirc=None, unknown_sections=None):
+    def __init__(self, bkhd, didx, data, hirc):
         self.bkhd = bkhd
         self.didx = didx
         self.data = data
         self.hirc = hirc
-        self.unknown_sections = unknown_sections
 
-    def __json__(self):
-        return {key: getattr(self, key) for key in self.__slots__}
-
-    def read(self, path, raw=False):
-        with BytesIO(path) as bs:
-            self.unknown_sections = []
-            while bs.tell() < bs.end():
-                section = BNKSection()
-                section.signature, = bs.read_s(4)
-                section.size, = bs.read_u32()
-                section.data = BNKSectionData()
-                if section.signature == 'BKHD':
-                    # bank header: data is depend of version
-                    self.bkhd = bkhd = section.data
-                    bkhd.version, bkhd.id = bs.read_u32(2)
-                    bkhd.unk = bs.read(section.size - 8)
-                elif section.signature == 'DIDX':
-                    # data index: contains list of wems(id, offset, size)
-                    self.didx = didx = section.data
-                    wem_count = section.size // 12
-                    didx.wems = []
-                    for i in range(wem_count):
-                        wem = BNKWem()
-                        wem.id, wem.offset, wem.size = bs.read_u32(3)
-                        didx.wems.append(wem)
-                elif section.signature == 'DATA':
-                    # data: all wems data, should just save start offset
-                    self.data = data = section.data
-                    data.start_offset = bs.tell()
-                    bs.pad(section.size)
-                elif section.signature == 'HIRC':
-                    # hierarchy: contains list of wwise objects
-                    self.hirc = hirc = section.data
-                    object_count, = bs.read_u32()
-                    hirc.objects = []
-                    for i in range(object_count):
-                        obj = BNKObject()
-                        obj.type = BNKObjectType(bs.read_u8()[0])
-                        obj.size, obj.id = bs.read_u32(2)
-                        obj.data = BNKObjectData()
-                        obj_offset = bs.tell()
-                        if obj.type == BNKObjectType.Sound:
-                            sound = obj.data
-                            bs.pad(4)
-                            if self.bkhd.version == 88:
-                                sound.stream_type, = bs.read_u32()
-                            else:
-                                sound.stream_type, = bs.read_u8()
-                            sound.wem_id, sound.source_id, = bs.read_u32(
-                                2)
-                            if self.bkhd.version == 88:
-                                bs.pad(7)
-                            else:
-                                bs.pad(8)
-                            sound.object_id, = bs.read_u32()
-                        elif obj.type == BNKObjectType.Action:
-                            action = obj.data
-                            action.scope, = bs.read_u8()
-                            action.type, = bs.read_u8()
-                            if action.type == 25:
-                                bs.pad(5)
-                                BNKHelper.skip_init_params(bs)
-                                action.switch_group_id, action.switch_id = bs.read_u32(2)
-                            else:
-                                action.object_id, = bs.read_u32()       
-                        elif obj.type == BNKObjectType.Event:
-                            event = obj.data
-                            if self.bkhd.version == 58:
-                                action_id_count, = bs.read_u32()
-                            else:
-                                action_id_count, = bs.read_u8()
-                            event.action_ids = bs.read_u32(action_id_count)
-                        elif obj.type == BNKObjectType.RandomOrSequenceContainer:
-                            container = obj.data
-                            container.switch_container_id, _ = BNKHelper.skip_base_params(bs, self.bkhd.version)
-                            bs.pad(24)
-                            container.sound_ids = bs.read_u32(bs.read_u32()[0])
-                        elif obj.type == BNKObjectType.SwitchContainer:
-                            container = obj.data
-                            container.parent_id = BNKHelper.skip_base_params(bs, self.bkhd.version)
-                            container.group_type, = bs.read_u8()
-                            if self.bkhd.version <= 0x59: bs.pad(3)
-                            container.group_id, = bs.read_u32()
-                            bs.pad(5)
-                            child_count, = bs.read_u32()
-                            container.child_ids = bs.read_u32(child_count)
-
-                        elif obj.type in (BNKObjectType.MusicSegment, BNKObjectType.MusicPlaylistContainer):
-                            segment = obj.data
-                            bs.pad(1)
-                            segment.sound_id, segment.music_switch_id = BNKHelper.skip_base_params(bs, self.bkhd.version)
-                            segment.music_track_ids = bs.read_u32(bs.read_u32()[0])
-                        elif obj.type == BNKObjectType.MusicTrack:
-                            track = obj.data 
-                            bs.pad(1)
-                            bs.pad(14 * bs.read_u32()[0])
-                            playlist_count, = bs.read_u32()
-                            bs.pad(playlist_count * 44)
-                            track.track_count, = bs.read_u32()
-                            bs.pad(0 - 4 - playlist_count * 44)
-                            
-                            track.wem_ids = [0] * track.track_count
-                            for i in range(playlist_count):
-                                track_index, wem_id, event_id = bs.read_u32(3)
-                                play_at, begin_strim_offset, end_trim_offset, source_duration = bs.read_f64(4)
-                                track.wem_ids[track_index] = wem_id
-                            bs.pad(4)
-                            BNKHelper.skip_clip_automation(bs)
-                            track.parent_id, _ = BNKHelper.skip_base_params(bs, self.bkhd.version)
-                            if bs.read_u8()[0] == 3:
-                                track.has_switch_ids = True
-                                bs.pad(1)
-                                track.switch_group_id, = bs.read_u32()
-                                bs.pad(4+4)
-                                track.switch_ids = bs.read_u32(track.track_count)
-
-                        elif obj.type == BNKObjectType.MusicSwitchContainer:
-                            container = obj.data 
-                            bs.pad(1)
-                            container.parent_id, _ = BNKHelper.skip_base_params(bs, self.bkhd.version)
-                            child_count, = bs.read_u32()
-                            container.child_ids = bs.read_u32(child_count)
-                            bs.pad(23)
-                            bs.pad(24 * bs.read_u32()[0])
-                            rule_count, = bs.read_u32()
-                            for i in range(rule_count):
-                                bs.pad(4 * bs.read_u32()[0])
-                                bs.pad(4 * bs.read_u32()[0])
-                                bs.pad(45 if self.bkhd.version <= 0x84 else 47)
-                                trans_obj, = bs.read_u8()
-                                if trans_obj > 0: bs.pad(30)
-                            bs.pad(1)
-                            argument_count, = bs.read_u32()
-                            container.argument_group_ids = bs.read_u32(argument_count)
-                            container.argument_group_type = bs.read_u8(argument_count)
-                            tree_size, = bs.read_u32()
-                            bs.pad(1)
-                            container.node_count = tree_size // 12
-                            container.nodes = []
-                            for i in range(container.node_count):
-                                container.nodes.append(bs.read_u32(2))
-                                bs.pad(4)
-
-                        obj_size = bs.tell() - obj_offset + 4
-                        if obj_size < obj.size:
-                            bs.pad(obj.size-obj_size)
-                        hirc.objects.append(obj)
+def read(path):
+    stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
+    with stream as bs:
+        # init
+        bkhd = None
+        didx = None
+        data = None
+        hirc = None
+        # skip func
+        def skip_fx():
+            bs.seek(1, 1)
+            fx_count = bs.read(1)[0]
+            if fx_count > 0:
+                bs.seek(1 + fx_count * (7 if bkhd.version <= 145 else 6), 1)
+            if bkhd.version > 136:
+                bs.seek(1, 1)
+                bs.seek(bs.read(1)[0] * 6, 1)
+            if 89 < bkhd.version <= 145: 
+                bs.seek(1, 1)
+        def skip_init_params():
+            bs.seek(bs.read(1)[0] * 5, 1)
+            bs.seek(bs.read(1)[0] * 9, 1)
+        def skip_pos_params():
+            pos_bits = bs.read(1)[0]
+            has_pos = pos_bits & 1
+            has_3d = False
+            has_automation = False
+            if has_pos:
+                if bkhd.version <= 89:
+                    has_2d = bs.read(1)[0] != 0
+                    has_3d = bs.read(1)[0] != 0
+                    if has_2d: bs.seek(1, 1)
                 else:
-                    # unknown sections to read
-                    section.data = bs.read(section.size)
-                    self.unknown_sections.append(section)
+                    has_3d = pos_bits & 2
+            if has_pos and has_3d:
+                if bkhd.version <= 89:
+                    has_automation = (bs.read(1)[0] & 3) != 1
+                    bs.seek(8, 1)
+                else:
+                    has_automation = (pos_bits >> 5) & 3
+                    bs.seek(1, 1)
+            if has_automation:
+                bs.seek(9 if bkhd.version <= 89 else 5, 1)
+                bs.seek(16 * int.from_bytes(bs.read(4), 'little'), 1)
+                bs.seek((16 if bkhd.version <= 89 else 20) * int.from_bytes(bs.read(4), 'little'), 1)
+            elif bkhd.version <= 89:
+                bs.seek(1, 1)
+        def skip_aux():
+            has_aux = (bs.read(1)[0] >> 3) & 1
+            if has_aux: bs.seek(16, 1)
+            if bkhd.version > 135: bs.seek(4, 1)
+        def skip_state_groups():
+            bs.seek(6, 1)
+            bs.seek(3 * bs.read(1)[0], 1)
+            for i in range(bs.read(1)[0]):
+                bs.seek(5, 1)
+                bs.seek(8 * bs.read(1)[0], 1)
+        def skip_rtpc():
+            for i in range(int.from_bytes(bs.read(2), 'little')):
+                bs.seek(13 if bkhd.version <= 89 else 12, 1)
+                bs.seek(12 * int.from_bytes(bs.read(2), 'little'), 1)
+        def skip_base_params():
+            skip_fx()
+            bus_id, parent_id = unpack('<2I', bs.read(8))
+            bs.seek(2 if bkhd.version <= 89 else 1, 1)
+            skip_init_params()
+            skip_pos_params()
+            skip_aux()
+            skip_state_groups()
+            skip_rtpc()
+            return bus_id, parent_id
+        def skip_clip_automation():
+            for i in range(int.from_bytes(bs.read(4), 'little')):
+                bs.seek(8, 1)
+                bs.seek(12 * int.from_bytes(bs.read(4), 'little'), 1)
+        # read hirc object
+        sound = 2
+        action = 3
+        event = 4
+        ranseq_container = 5
+        switch_container = 6
+        mseglist_container = {10, 13}
+        music_track = 11
+        mswitch_container = 12
+        def read_object():
+            type, size, id = unpack('<B2I', bs.read(9))
+            offset = bs.tell()-4 # 4 byte id
+            obj = Object(id, type, size, None)
+            if type == sound:
+                bs.seek(4, 1)
+                stream_type = int.from_bytes(bs.read(4), 'little') if bkhd.version == 88 else bs.read(1)[0]
+                wem_hash, source_id = unpack('<2I', bs.read(8))
+                bs.seek(7 if bkhd.version == 88 else 8, 1)
+                object_id = int.from_bytes(bs.read(4), 'little')
+                obj.data = (stream_type, wem_hash, source_id, object_id)
+            elif type == action:
+                switch_group_id, switch_id, object_id = None, None, None
+                scope, action_type = unpack('<2B', bs.read(2))
+                if action_type == 25:
+                    bs.seek(5, 1)
+                    skip_init_params()
+                    switch_group_id, switch_id = unpack('<2I', bs.read(8))
+                else:
+                    object_id = int.from_bytes(bs.read(4), 'little')
+                obj.data = (scope, action_type, switch_group_id, switch_id, object_id)
 
-            return self
-        
-    def write(self, path, wem_datas, raw=False):
-        with BytesIO(path) as bs:
-            # write bkhd
-            # signature, size, version, id, unknown 24 bytes
-            bs.write_s('BKHD')
-            bs.write_u32(32, 134, 0)
-            bs.write(b'>]p\x17\x00\x00\x00\x00\xfa\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00') 
+            elif type == event:
+                action_count = int.from_bytes(bs.read(4), 'little') if bkhd.version == 58 else bs.read(1)[0]
+                action_ids = unpack(f'<{action_count}I', bs.read(action_count*4))
+                obj.data = action_ids
 
-            # write didx
-            # signature, size
-            wem_data_offsets = []
-            bs.write_s('DIDX')
-            bs.write_u32(len(self.didx.wems)*12)
-            # write wem infos
-            for i, wem in enumerate(self.didx.wems):
-                wem_data_offsets.append(bs.tell()+4)
-                wem.size = len(wem_datas[i])
-                bs.write_u32(wem.id, 0, wem.size)
+            elif type == ranseq_container:
+                _, switch_container_id = skip_base_params()
+                sound_count, = unpack('<24xI', bs.read(28))
+                sound_ids = unpack(f'<{sound_count}I', bs.read(sound_count*4))
+                obj.data = (switch_container_id, sound_ids)
 
-            # write data
-            # signature, size
-            bs.write_s('DATA')
-            bs.write_u32(sum(wem.size for wem in self.didx.wems))
-            # wem data - need to minus start offset
-            start_offset = bs.tell()
-            for i, wem_data in enumerate(wem_datas):
-                data_offset = bs.tell()
-                bs.seek(wem_data_offsets[i])
-                bs.write_u32(data_offset-start_offset)
-                bs.seek(data_offset)
-                bs.write(wem_data)
-                
-            return bs.raw() if raw else None
+            elif type == switch_container:
+                _, parent_id = skip_base_params()
+                group_type = bs.read(1)[0]
+                if bkhd.version <= 89: bs.seek(3, 1)
+                group_id, child_count = unpack('<I5xI', bs.read(13))
+                child_ids = unpack(f'<{child_count}I', bs.read(child_count*4))
+                obj.data = (group_type, group_id, child_ids)
+
+            elif type in mseglist_container:
+                bs.seek(1, 1)
+                music_switch_id, sound_id = skip_base_params()
+                music_track_count = int.from_bytes(bs.read(4), 'little')
+                music_track_ids = unpack(f'<{music_track_count}I', bs.read(music_track_count*4))
+                obj.data = (music_switch_id, sound_id, music_track_ids)
+
+            elif type == music_track:
+                has_switch_ids, switch_group_id, switch_ids = False, None, None
+                bs.seek(1, 1)
+                bs.seek(14 * int.from_bytes(bs.read(4), 'little'), 1)
+                playlist_count = int.from_bytes(bs.read(4), 'little')
+                playlist_buffer = bs.read(playlist_count*44)
+                track_count = int.from_bytes(bs.read(4), 'little')
+                wem_hashes = [0] * track_count
+                for track_id, wem_hash in iter_unpack('<2I36x', playlist_buffer):
+                    wem_hashes[track_id] = wem_hash
+                bs.seek(4, 1)
+                skip_clip_automation()
+                _, parent_id = skip_base_params()
+                if bs.read(1)[0] == 3:
+                    has_switch_ids = True
+                    switch_group_id, = unpack('<xI8x', bs.read(13))
+                    switch_ids = unpack(f'<{track_count}I', bs.read(track_count*4))
+                obj.data = (wem_hashes, parent_id, has_switch_ids, switch_group_id, switch_ids)
+
+            elif type == mswitch_container:
+                bs.seek(1, 1)
+                _, parent_id = skip_base_params()
+                child_count = int.from_bytes(bs.read(4), 'little')
+                child_ids = unpack(f'<{child_count}I', bs.read(child_count*4))
+                bs.seek(23, 1)
+                bs.seek(24 * int.from_bytes(bs.read(4), 'little'), 1)
+                rule_count = int.from_bytes(bs.read(4), 'little')
+                for _ in range(rule_count):
+                    bs.seek(4 * int.from_bytes(bs.read(4), 'little'), 1)
+                    bs.seek(4 * int.from_bytes(bs.read(4), 'little'), 1)
+                    bs.seek(45 if bkhd.version <= 132 else 47, 1)
+                    if bs.read(1)[0] > 0: bs.seek(30, 1)
+                param_count, = unpack('<xI', bs.read(5))
+                param_group_ids = unpack(f'<{param_count}I', bs.read(param_count*4))
+                param_group_types = unpack(f'<{param_count}B', bs.read(param_count))
+                tree_size, = unpack('<Ix', bs.read(5))
+                node_count = tree_size // 12
+                nodes = [*iter_unpack('<3I', bs.read(node_count*12))]
+                obj.data = (parent_id, child_ids, param_group_ids, param_group_types, nodes)
+
+            unread = size - bs.tell() + offset
+            if unread < 0:
+                raise Exception(f'pyRitoFile: Error: Read BNK {path}: Wrong size with object type: {type}')
+            if unread > 0: bs.seek(unread, 1)
+            return obj
+
+         
+        # get file size
+        bs.seek(0, 2)
+        end = bs.tell()
+        bs.seek(0)
+        # main
+        while bs.tell() < end:
+            # sections
+            signature, size = unpack('<4sI', bs.read(8))
+            if signature == b'BKHD':
+                bkhd = BankHeader(*unpack('<2I', bs.read(8)))
+                bs.seek(size-8, 1)
+            elif signature == b'DIDX':
+                didx = DataIndex([
+                    Wem(*ud)
+                    for ud in iter_unpack('<3I', bs.read(size))
+                ])
+            elif signature == b'DATA':
+                data = Data(bs.tell())
+                bs.seek(size, 1)
+            elif signature == b'HIRC':
+                hirc = Hierarchy([
+                    read_object()
+                    for _ in range(int.from_bytes(bs.read(4), 'little'))
+                ])
+            else:
+                # unknown
+                bs.seek(size, 1)
+
+
+        return SoundBank(
+            bkhd,
+            didx, 
+            data,
+            hirc
+        )
+    
+def write(soundbank, wem_datas, path=None):
+    stream = BytesIO() if path is None else open(path, 'wb')
+    with stream as bs:
+        # bkhd
+        bs.write(pack(
+            '<4s3I24s', 
+            b'BKHD', 
+            32, 134, 0,
+            # unknown 24 bytes
+            b'>]p\x17\x00\x00\x00\x00\xfa\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+        ))
+
+        # didx
+        wem_count = len(soundbank.didx.wems)
+        bs.write(pack('<4sI', b'DIDX', wem_count*12))
+        data_size = 0
+        info_offsets = [0] * wem_count
+        for i, wem in enumerate(soundbank.didx.wems):
+            info_offsets[i] = bs.tell()+4
+            wem_size = len(wem_datas[i])
+            bs.write(pack('<3I', wem.hash, 0, wem_size))
+            data_size += wem_size
+
+        # data
+        bs.write(pack('<4sI', b'DATA', data_size))
+        start_offset = bs.tell()
+        for i, wem_data in enumerate(wem_datas):
+            data_offset = bs.tell()
+            bs.write(wem_data)
+            # go back write info
+            bs.seek(info_offsets[i])
+            bs.write(pack('<I', data_offset-start_offset))
+            bs.seek(0, 2)
+
+        return bs.getvalue() if path is None else None
 

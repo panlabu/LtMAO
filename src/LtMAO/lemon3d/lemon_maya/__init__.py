@@ -1,40 +1,37 @@
 
-def install_plugin(maya_pref_dir):
-    import os, os.path
-
-    # get maya.env path
-    maya_env_file = f'{maya_pref_dir}/Maya.env'
-    maya_env = {}
-    # ensure maya.env
-    if not os.path.exists(maya_env_file):
-        open(maya_env_file, 'w+', encoding='utf-8').close()
-    # read existed maya.env 
-    with open(maya_env_file, 'r', encoding='utf-8') as f:
+def install_plugin(pref_dir):
+    # init
+    import posixpath
+    env_file = f'{pref_dir}/Maya.env'
+    lemon_dir = posixpath.abspath('./src/LtMAO/lemon3d/lemon_maya')
+    ltmao_dir = posixpath.abspath('.')
+    envs = {}
+    # read
+    with open(env_file, 'a+', encoding='utf-8') as f:
+        f.seek(0)
         for line in f:
-            if line.startswith('#') or not line.strip():
-                continue
-            key, value = line.strip().split('=', 1)
-            maya_env[key] = value
-    lemon_maya_dir = os.path.abspath('./src/LtMAO/lemon3d/lemon_maya').replace('\\', '/')
-    # add lemon3d to maya env  
-    ltmao_dir = os.path.abspath('.').replace('\\','/')
-    maya_paths = {
-        'MAYA_PLUG_IN_PATH': f'{lemon_maya_dir}/plugins;',
-        'MAYA_SHELF_PATH': f'{lemon_maya_dir}/prefs/shelves;',
-        'XBMLANGPATH': f'{lemon_maya_dir}/prefs/icons;',
-        'MAYA_SCRIPT_PATH': f'{lemon_maya_dir}/scripts;',
-        'PYTHONPATH': f'{ltmao_dir}/src;{ltmao_dir}/epython/Lib/site-packages;'
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, values = line.split('=', 1)
+                envs[key.strip()] = values.strip().rstrip(';').split(';')
+    # add ltmao and lemon3d to maya envs  
+    paths = {
+        'MAYA_PLUG_IN_PATH': [f'{lemon_dir}/plugins'],
+        'MAYA_SHELF_PATH': [f'{lemon_dir}/prefs/shelves'],
+        'XBMLANGPATH': [f'{lemon_dir}/prefs/icons'],
+        'MAYA_SCRIPT_PATH': [f'{lemon_dir}/scripts'],
+        'PYTHONPATH': [f'{ltmao_dir}/src', f'{ltmao_dir}/cpy/Lib/site-packages']
     }
-    for key, value in maya_paths.items():
-        if key not in maya_env:
-            maya_env[key] = ''
-        if value not in maya_env[key]:
-            if not maya_env[key].endswith(';'):
-                maya_env[key] += ';'
-            maya_env[key] += value
-    # save maya.env
-    with open(maya_env_file, 'w+', encoding='utf-8') as f:
-        for key, value in maya_env.items():
-            f.write(f'{key}={value}\n')
-    print(f'lemon_maya: Finish: Install plugin: {maya_pref_dir}')
+    for key, values in paths.items():
+        if key not in envs:
+            envs[key] = values
+        else:
+            for value in values:
+                if value not in envs[key]:
+                    envs[key].append(value)
+    # write
+    with open(env_file, 'w', encoding='utf-8') as f:
+        for key, values in envs.items():
+            f.write(f'{key}={";".join(values)}\n')
+    print(f'lemon_maya: Finish: Install plugin at: {pref_dir}')
     

@@ -1,7 +1,7 @@
 from struct import unpack, iter_unpack, pack
 from io import BytesIO
 
-class SceneObject:
+class StaticComponent:
     __slots__ = ('signature', 'version', 'flags', 'name', 'central', 'pivot', 'bounding_box', 'material', 'vertex_type', 'indices', 'positions', 'uvs', 'colors')
 
     def __init__(self, signature, version, flags, name, central, pivot, bounding_box, material, vertex_type, indices, positions, uvs, colors):
@@ -20,20 +20,27 @@ class SceneObject:
         self.colors = colors
 
 def read(path):
-    stream = BytesIO(path) if isinstance(path, bytes) else open('rb', path)
+    stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
-        # init some value
+        # init 
+        major = None
+        minor = None
+        flags = 0
+        name = ''
+        pivot = None
+        central = (0, 0, 0)
+        bounding_box = None
+        material = ''
         vertex_type = 0
         indices = []
         positions = []
         uvs = []
-        signature = bs.read(8)
-        if signature == b'[ObjectB':
-            # sco
+        colors = []
+        signature = bs.read(13)
+        if signature == b'[ObjectBegin]':
+            # static component object
             # read line
-            bs.seek(0)
             records = iter([line.split() for line in bs.read().decode().split('\n')])
-            signature = next(records)
             for record in records:
                 if not record:
                     continue
@@ -69,9 +76,10 @@ def read(path):
                             (float(rd[7]), float(rd[8])),
                             (float(rd[9]), float(rd[10]))
                         ))
-        elif signature == b'r3d2Mesh':
-            # scb
+        elif signature.startswith(b'r3d2Mesh'):
+            # static component binary
             # header
+            bs.seek(8)
             major, minor = unpack('<HH', bs.read(4))
             if major not in {3, 2} and minor != 1:
                 raise Exception(f'pyRitoFile: Error: Read SCB {path}: Unsupported file version: {major}.{minor}')
@@ -106,7 +114,7 @@ def read(path):
         else:
             raise Exception(f'pyRitoFile: Error: Read SCB {path}: Wrong file signature: {signature}')
 
-    return SceneObject(
+    return StaticComponent(
         signature,
         (major, minor), # version
         flags,
@@ -123,44 +131,57 @@ def read(path):
     )
 
 
-def write(scene_object, path=None):
+def write(statcomp, path=None):
     stream = BytesIO() if path is None else open(path, 'wb')
     with stream as bs:
+        # init
+        if statcomp.bounding_box == None:
+            x_min, y_min, z_min = statcomp.positions[0]
+            x_max, y_max, z_max = statcomp.positions[0]
+            for x, y, z in statcomp.positions:
+                if x > x_max: x_max = x
+                if y > y_max: y_max = y
+                if z > z_max: z_max = z
+                if x < x_min: x_min = x
+                if y < y_min: y_min = y
+                if z < z_min: z_min = z
+            statcomp.bounding_box = ((x_min, y_min, z_min), (x_max, y_max, z_max))
         # header
         bs.write(pack('<8sHH', b'r3d2Mesh', 3, 2))
         # various
-        face_count = len(scene_object.indices) // 3
+        face_count = len(statcomp.indices) // 3
         bs.write(pack(
             '<128s3I6fI',
-            scene_object.name,
+            statcomp.name.encode(),
+            len(statcomp.positions),
             face_count,
-            len(scene_object.positions),
-            scene_object.flags,
-            0, 0, 0, 0, 0, 0, # bouding box later
-            scene_object.vertex_type
+            statcomp.flags,
+            *statcomp.bounding_box[0],
+            *statcomp.bounding_box[1],
+            statcomp.vertex_type
         ))
-
-        # positions 
-        x_min, y_min, z_min = scene_object.positions[0]
-        x_max, y_max, z_max = scene_object.positions[0]
-        for x, y, z in scene_object.positions:
-            if x > x_max: x_max = x
-            if y > y_max: y_max = y
-            if z > z_max: z_max = z
-            if x < x_min: x_min = x
-            if y < y_min: y_min = y
-            if z < z_min: z_min = z
-            bs.write(pack('<3f', x, y, z))
+        
+        # positions
+        bs.write(pack(
+            f'<{len(statcomp.positions)*3}f',
+            *[v for p in statcomp.positions for v in p]
+        ))
+        # colors
+        if statcomp.vertex_type >= 1:
+            bs.write(pack(
+                f'<{len(statcomp.colors)*4}B',
+                *[v for c in statcomp.colors for v in c]
+            ))
         # central
-        bs.write(pack('<3f', *scene_object.central))
+        bs.write(pack('<3f', *statcomp.central))
         # faces 
-        indices = scene_object.indices
-        material = scene_object.material.encode()
-        uvs = scene_object.uvs
+        indices = statcomp.indices
+        material = statcomp.material.encode()
+        uvs = statcomp.uvs
         for i in range(face_count):
             index = i * 3
             bs.write(pack(
-                '3I64s6f',
+                '<3I64s6f',
                 indices[index],
                 indices[index+1],
                 indices[index+2],
@@ -173,8 +194,4 @@ def write(scene_object, path=None):
                 uvs[index+2][1]
 
             ))
-        # bounding box
-        bs.seek(152)
-        bs.write(pack('<6f', x_min, y_min, z_min, x_max, y_max, z_max))
-
         return stream.getvalue() if path is None else None

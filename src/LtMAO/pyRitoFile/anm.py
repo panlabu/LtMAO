@@ -34,6 +34,8 @@ class Animation:
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
+        # init
+        error_metrics = None
         # header
         signature = bs.read(8)
         version = int.from_bytes(bs.read(4), 'little')
@@ -251,7 +253,7 @@ def write(animation, path=None):
                 sid = vec_bank.setdefault(scale, vec_id)
                 if sid == vec_id:
                     vec_id += 1
-                # rorate
+                # rotate
                 while r_near < r_keyframe_count and keyframe > r_keyframes[r_near]:
                     r_near += 1
                 if r_near == 0:
@@ -300,10 +302,10 @@ def write(animation, path=None):
         # quats
         quats_offset = bs.tell()
         for quat in quat_bank:
-            bs.write(pack('<6s', quaternion_decompress(quat)))
+            bs.write(pack('<6s', quaternion_compress(quat)))
         # joint hashes
         joint_hashes_offset = bs.tell()
-        bs.write(pack(f'<{track_count}I', *track))
+        bs.write(pack(f'<{track_count}I', *animation.tracks))
         # buffers   
         buffers_offset = bs.tell()
         for buffer in buffers:

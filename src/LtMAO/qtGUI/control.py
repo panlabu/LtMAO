@@ -31,7 +31,7 @@ from threading import Thread
 
 from . import helper
 from .. import (
-    setting, 
+    stash, 
     winLT, 
     hash_helper, 
     pyRitoFile, 
@@ -76,8 +76,8 @@ def on_page_id_changed(event, page_id):
             else:
                 c.widget.setChecked(False)
 
-    setting.set('qtGUI.page_id', page_id)
-    setting.save()
+    stash.store('qtGUI.page_id', page_id)
+    stash.save()
 
 all = [
     Control('🕹️\ncslmao', 0, lambda widget: build_cslmao(widget)),
@@ -125,7 +125,7 @@ def build_cslmao(widget: QWidget):
     button.setText('🎮 Select Game Folder')
     layout2.addWidget(button)
     label = QLabel()
-    label.setText(setting.get('game_folder', 'Please select League of Legends/Game folder.'))
+    label.setText(stash.fetch('game_folder', 'Please select League of Legends/Game folder.'))
     layout2.addWidget(label, stretch=1)
     def select_game_folder(label):
         if is_overlay_running():
@@ -135,14 +135,14 @@ def build_cslmao(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             'Select League of Legends/Game folder',
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             final_path = dirpath.replace('\\', '/')
             if not os.path.exists(lepath.join(final_path, 'League of Legends.exe')):
                 raise Exception(f'cslmao: Error:  Select game folder: No "League of Legends.exe" found in {final_path}')
-            setting.set('game_folder', final_path)
-            setting.save()
+            stash.store('game_folder', final_path)
+            stash.save()
             label.setText(final_path)
     button.clicked.connect(lambda event: select_game_folder(label))
     button = QToolButton()
@@ -154,10 +154,10 @@ def build_cslmao(widget: QWidget):
     layout2 = QHBoxLayout()
     tft_checkbox = QCheckBox()
     tft_checkbox.setText('🕹️ Enable TFT and other modes')
-    tft_checkbox.setChecked(setting.get('cslmao.tft', False))
+    tft_checkbox.setChecked(stash.fetch('cslmao.tft', False))
     def tft_cmd():
-        setting.set('cslmao.tft', tft_checkbox.isChecked())
-        setting.save()
+        stash.store('cslmao.tft', tft_checkbox.isChecked())
+        stash.save()
     tft_checkbox.clicked.connect(tft_cmd)
     layout2.addWidget(tft_checkbox)
     layout2.addStretch()
@@ -166,10 +166,10 @@ def build_cslmao(widget: QWidget):
     layout2 = QHBoxLayout()
     py2bin_checkbox = QCheckBox()
     py2bin_checkbox.setText('📝 Auto convert all PY to BIN before run')
-    py2bin_checkbox.setChecked(setting.get('cslmao.auto_py2bin', False))
+    py2bin_checkbox.setChecked(stash.fetch('cslmao.auto_py2bin', False))
     def py2bin_cmd():
-        setting.set('cslmao.auto_py2bin', py2bin_checkbox.isChecked())
-        setting.save()
+        stash.store('cslmao.auto_py2bin', py2bin_checkbox.isChecked())
+        stash.save()
     py2bin_checkbox.clicked.connect(py2bin_cmd)
     layout2.addWidget(py2bin_checkbox)
     layout2.addStretch()
@@ -178,10 +178,10 @@ def build_cslmao(widget: QWidget):
     layout2 = QHBoxLayout()
     dds2tex_checkbox = QCheckBox()
     dds2tex_checkbox.setText('🌌 Auto convert all DDS to TEX before run')
-    dds2tex_checkbox.setChecked(setting.get('cslmao.auto_dds2tex', False))
+    dds2tex_checkbox.setChecked(stash.fetch('cslmao.auto_dds2tex', False))
     def dds2tex_cmd():
-        setting.set('cslmao.auto_dds2tex', dds2tex_checkbox.isChecked())
-        setting.save()
+        stash.store('cslmao.auto_dds2tex', dds2tex_checkbox.isChecked())
+        stash.save()
     dds2tex_checkbox.clicked.connect(dds2tex_cmd)
     layout2.addWidget(dds2tex_checkbox)
     layout2.addStretch()
@@ -190,7 +190,7 @@ def build_cslmao(widget: QWidget):
     layout2 = QHBoxLayout()
     bp_checkbox = QCheckBox()
     bp_checkbox.setText('🍑 Enable BumPath Preprocess')
-    bp_checkbox.setChecked(setting.get('cslmao.bumpath_preprocess', False))
+    bp_checkbox.setChecked(stash.fetch('cslmao.bumpath_preprocess', False))
     layout2.addWidget(bp_checkbox)
     layout2.addStretch()
     show_layout.addLayout(layout2)
@@ -204,7 +204,7 @@ def build_cslmao(widget: QWidget):
     bp_source_button.setText('📁 Source Folder')
     bp_source_button.setMinimumWidth(130)
     bp_row1.addWidget(bp_source_button)
-    bp_source_label = QLabel(setting.get('cslmao.bp_source_folder', ''))
+    bp_source_label = QLabel(stash.fetch('cslmao.bp_source_folder', ''))
     bp_row1.addWidget(bp_source_label, stretch=1)
     bp_fields_layout.addLayout(bp_row1)
     def bp_select_source():
@@ -212,12 +212,12 @@ def build_cslmao(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             'Select BumPath Source Folder',
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             bp_source_label.setText(dirpath)
-            setting.set('cslmao.bp_source_folder', dirpath)
-            setting.save()
+            stash.store('cslmao.bp_source_folder', dirpath)
+            stash.save()
     bp_source_button.clicked.connect(bp_select_source)
     # bin file
     bp_row2 = QHBoxLayout()
@@ -225,7 +225,7 @@ def build_cslmao(widget: QWidget):
     bp_bin_button.setText('📝 Bin')
     bp_bin_button.setMinimumWidth(130)
     bp_row2.addWidget(bp_bin_button)
-    bp_bin_label = QLabel(setting.get('cslmao.bp_bin_file', ''))
+    bp_bin_label = QLabel(stash.fetch('cslmao.bp_bin_file', ''))
     bp_row2.addWidget(bp_bin_label, stretch=1)
     bp_fields_layout.addLayout(bp_row2)
     def bp_select_bin():
@@ -233,22 +233,22 @@ def build_cslmao(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget,
             'Select BIN File',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             'BIN Files (*.bin)'
         )
         if len(filepath[0]) > 0:
             bp_bin_label.setText(filepath[0])
-            setting.set('cslmao.bp_bin_file', filepath[0])
-            setting.save()
+            stash.store('cslmao.bp_bin_file', filepath[0])
+            stash.save()
     bp_bin_button.clicked.connect(bp_select_bin)
     # prefix
     bp_row3 = QHBoxLayout()
     bp_row3.addWidget(QLabel('🔗 Prefix:'))
     bp_prefix_line = QLineEdit()
-    bp_prefix_line.setText(setting.get('cslmao.bp_prefix', 'bum'))
+    bp_prefix_line.setText(stash.fetch('cslmao.bp_prefix', 'bum'))
     def bp_prefix_changed():
-        setting.set('cslmao.bp_prefix', bp_prefix_line.text())
-        setting.save()
+        stash.store('cslmao.bp_prefix', bp_prefix_line.text())
+        stash.save()
     bp_prefix_line.editingFinished.connect(bp_prefix_changed)
     bp_row3.addWidget(bp_prefix_line, stretch=1)
     bp_fields_layout.addLayout(bp_row3)
@@ -258,7 +258,7 @@ def build_cslmao(widget: QWidget):
     bp_output_button.setText('📂 Bumed Folder')
     bp_output_button.setMinimumWidth(130)
     bp_row4.addWidget(bp_output_button)
-    bp_output_label = QLabel(setting.get('cslmao.bp_output_folder', ''))
+    bp_output_label = QLabel(stash.fetch('cslmao.bp_output_folder', ''))
     bp_row4.addWidget(bp_output_label, stretch=1)
     bp_fields_layout.addLayout(bp_row4)
     def bp_select_output():
@@ -266,12 +266,12 @@ def build_cslmao(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             'Select BumPath Output Folder',
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             bp_output_label.setText(dirpath)
-            setting.set('cslmao.bp_output_folder', dirpath)
-            setting.save()
+            stash.store('cslmao.bp_output_folder', dirpath)
+            stash.save()
     bp_output_button.clicked.connect(bp_select_output)
     # set fields widget
     bp_fields_widget.setLayout(bp_fields_layout)
@@ -279,8 +279,8 @@ def build_cslmao(widget: QWidget):
     show_layout.addWidget(bp_fields_widget)
     def bp_checkbox_cmd():
         checked = bp_checkbox.isChecked()
-        setting.set('cslmao.bumpath_preprocess', checked)
-        setting.save()
+        stash.store('cslmao.bumpath_preprocess', checked)
+        stash.save()
         bp_fields_widget.setVisible(checked)
     bp_checkbox.clicked.connect(bp_checkbox_cmd)
 
@@ -337,12 +337,12 @@ def build_cslmao(widget: QWidget):
     box = QComboBox()
     box.setMinimumWidth(100)
     box.addItems(['all', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
-    box.setCurrentText(setting.get('cslmao.profile', 'all'))
+    box.setCurrentText(stash.fetch('cslmao.profile', 'all'))
     # rebuild layout if profile changed
     def change_profile():
         profile = box.currentText()
-        setting.set('cslmao.profile', profile)
-        setting.save()
+        stash.store('cslmao.profile', profile)
+        stash.save()
         view_layout_smart.build_view_layout()
     box.currentTextChanged.connect(change_profile)
     layout2.addWidget(box)
@@ -368,7 +368,7 @@ def build_cslmao(widget: QWidget):
         mods = cslmao.MOD.mods
         max_column = app.max_column
         search = search_line.text().lower()
-        profile = setting.get('cslmao.profile', 'all')
+        profile = stash.fetch('cslmao.profile', 'all')
         app.view_mods = view_mods = [False] * len(mods)
         # get view mods with search and profile
         for mod_index, mod in enumerate(mods):
@@ -471,7 +471,7 @@ def build_cslmao(widget: QWidget):
                     filepath = dialog.getSaveFileName(
                         widget, 
                         'Export FANTOME',
-                        lepath.join(setting.get('qtGUI.default_folder', ''), default_filename),
+                        lepath.join(stash.fetch('qtGUI.default_folder', ''), default_filename),
                         f'FANTOME File (*.fantome)'
                     )
                     if len(filepath[0]) > 0:
@@ -637,7 +637,7 @@ def build_cslmao(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             'Select PNG',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'PNG Files (*.png)'
         )
         if len(filepath[0]) > 0:
@@ -773,7 +773,7 @@ def build_cslmao(widget: QWidget):
                 # convert files before we run
                 cslmao.convert_raw_files_before_run()
                 # run
-                profile = setting.get('Cslmao.profile', 'all')
+                profile = stash.fetch('Cslmao.profile', 'all')
                 app.make_overlay = p = cslmao.make_overlay(
                     profile)
                 cslmao.block_and_stream_process_output(
@@ -817,7 +817,7 @@ def build_cslmao(widget: QWidget):
             'Version': '1.0',
             'Description': ''
         }
-        mod_profile = setting.get('cslmao.profile', 'all')
+        mod_profile = stash.fetch('cslmao.profile', 'all')
         if mod_profile == 'all':
             mod_profile = '0'
         mod = cslmao.create_mod(path=mod_path, enable=False, profile=mod_profile)
@@ -838,7 +838,7 @@ def build_cslmao(widget: QWidget):
         filepaths = dialog.getOpenFileNames(
             widget, 
             f'Select MOD',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'MOD Files (*.fantome *.zip)'
         )
         if len(filepaths[0]) > 0:
@@ -846,7 +846,7 @@ def build_cslmao(widget: QWidget):
                 final_paths = filepaths[0]
                 for final_path in final_paths:
                     mod_path = '.'.join(os.path.basename(final_path).split('.')[:-1])
-                    mod_profile = setting.get('cslmao.profile', 'all')
+                    mod_profile = stash.fetch('cslmao.profile', 'all')
                     if mod_profile == 'all':
                         mod_profile = '0'
                     mod = cslmao.create_mod(
@@ -909,7 +909,7 @@ def build_cslmao(widget: QWidget):
         def import_thrd():
             for fantome_file in fantome_files:
                 mod_path = '.'.join(os.path.basename(fantome_file).split('.')[:-1])
-                mod_profile = setting.get('cslmao.profile', 'all')
+                mod_profile = stash.fetch('cslmao.profile', 'all')
                 if mod_profile == 'all':
                     mod_profile = '0'
                 mod = cslmao.create_mod(
@@ -926,53 +926,78 @@ def build_cslmao(widget: QWidget):
     helper.link_dnd_cmd(widget, dnd_cmd)
 
 def build_hash_helper(widget: QWidget):
-
     layout = QVBoxLayout()
 
-    # path hash + reset button
-    def get_hash_size(hash_id):
-        return hash_helper.total_size(hash_helper.local_cdtb) if hash_id == 0 else hash_helper.total_size(hash_helper.local_extracted)
-
-    def get_hash_path(hash_id):
-        return setting.get('hash_helper.local_cdtb', hash_helper.local_cdtb) if hash_id == 0 else setting.get('hash_helper.local_extracted', hash_helper.local_extracted)
-
-    def set_hash_path(hash_id, label):
+    # cdtb
+    layout2 = QHBoxLayout()
+    def get_cdtb_text():
+        return f'📖 CDTB: [{hash_helper.total_size(hash_helper.cdtb_dir)}] {stash.fetch("hash_helper.cdtb_dir", hash_helper.cdtb_dir)}'
+    cdtb_label = QLabel(get_cdtb_text())
+    layout2.addWidget(cdtb_label, stretch=8)
+    change_button = QToolButton()
+    change_button.setText('🛠️ Change')
+    def set_cdtb_path():
         dialog = QFileDialog()
-        dirpath = dialog.getExistingDirectory(widget, 'Select hash folder', setting.get('qtGUI.default_folder', ''))
+        dirpath = dialog.getExistingDirectory(
+            widget, 
+            'Select hash folder', 
+            stash.fetch('qtGUI.default_folder', '')
+        )
         if dirpath != '':
-            abspath = lepath.abs(dirpath)
-            abspath_cdtb = lepath.abs(hash_helper.local_cdtb)
-            abspath_extracted = lepath.abs(hash_helper.local_extracted)
-            if hash_id == 0:
-                if abspath == abspath_extracted:
-                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as extracted hash path.')
-                hash_helper.apply_basedir(abspath, hash_helper.local_extracted)
-                setting.set('hash_hepler.local_cdtb', abspath)
-            else:
-                if abspath == abspath_cdtb:
-                    raise Exception(f'hash_helper: Error: Set hash path: {abspath} is already selected as cdtb hash path.')
-                hash_helper.apply_basedir(hash_helper.local_cdtb, abspath)
-                setting.set('hash_helper.local_extracted', abspath)
-            setting.save()
-            label.setText(f'📖 {hash_name}: {get_hash_size(hash_id)}] {get_hash_path(hash_id)}')
+            selected_abspath = lepath.abs(dirpath)
+            cdtb_abspath = lepath.abs(hash_helper.cdtb_dir)
+            extracted_abspath = lepath.abs(hash_helper.extracted_dir)
+            if selected_abspath in { cdtb_abspath, extracted_abspath}:
+                raise Exception(f'hash_helper: Error: Set hash path: {selected_abspath} is already used.')
+        
+            hash_helper.apply_paths(selected_abspath, extracted_abspath)
+            stash.store('hash_hepler.ctdb_dir', selected_abspath)
+            stash.save()
+            cdtb_label.setText(get_cdtb_text())
+    change_button.clicked.connect(set_cdtb_path)
+    layout2.addWidget(change_button, stretch=1)
+    open_button = QToolButton()
+    open_button.setText('📂 Open')
+    open_button.clicked.connect(lambda: os.startfile(lepath.abs(hash_helper.cdtb_dir)))
+    layout2.addWidget(open_button, stretch=1)
+    layout.addLayout(layout2)
 
-    def open_hash_path(hash_id):
-        os.startfile(lepath.abs(hash_helper.local_cdtb) if hash_id == 0 else lepath.abs(hash_helper.local_extracted))
+    # extracted
+    layout2 = QHBoxLayout()
+    def get_extracted_text():
+        return f'📖 Extracted: [{hash_helper.total_size(hash_helper.extracted_dir)}] {stash.fetch("hash_helper.extracted_dir", hash_helper.extracted_dir)}'
+    extracted_label = QLabel(get_extracted_text())
+    layout2.addWidget(extracted_label, stretch=8)
+    change_button = QToolButton()
+    change_button.setText('🛠️ Change')
+    def set_extracted_path():
+        dialog = QFileDialog()
+        dirpath = dialog.getExistingDirectory(
+            widget, 
+            'Select hash folder', 
+            stash.fetch('qtGUI.default_folder', '')
+        )
+        if dirpath != '':
+            selected_abspath = lepath.abs(dirpath)
+            cdtb_abspath = lepath.abs(hash_helper.cdtb_dir)
+            extracted_abspath = lepath.abs(hash_helper.extracted_dir)
+            if selected_abspath in { cdtb_abspath, extracted_abspath}:
+                raise Exception(f'hash_helper: Error: Set hash path: {selected_abspath} is already used.')
+        
+            hash_helper.apply_paths(cdtb_abspath, selected_abspath)
+            stash.store('hash_hepler.extracted_dir', selected_abspath)
+            stash.save()
+            extracted_label.setText(get_extracted_text())
     
-    for hash_id, hash_name in enumerate(('CDTB', 'Extracted')):
-        layout2 = QHBoxLayout()
-        label = QLabel(f'📖 {hash_name}: [{get_hash_size(hash_id)}] {get_hash_path(hash_id)}')
-        layout2.addWidget(label, stretch=8)
-        button = QToolButton()
-        button.setText('🛠️ Change')
-        button.clicked.connect(lambda event, id=hash_id: set_hash_path(id, label))
-        layout2.addWidget(button, stretch=1)
-        button = QToolButton()
-        button.setText('📂 Open')
-        button.clicked.connect(lambda event, id=hash_id: open_hash_path(id))
-        layout2.addWidget(button, stretch=1)
-        layout.addLayout(layout2)
+    change_button.clicked.connect(set_extracted_path)
+    layout2.addWidget(change_button, stretch=1)
+    open_button = QToolButton()
+    open_button.setText('📂 Open')
+    open_button.clicked.connect(lambda: os.startfile(lepath.abs(hash_helper.extracted_dir)))
+    layout2.addWidget(open_button, stretch=1)
+    layout.addLayout(layout2)
 
+    # buttons
     layout2 = QHBoxLayout()
     button = QToolButton()
     button.setText('❌ Clear Extract hash')
@@ -989,7 +1014,7 @@ def build_hash_helper(widget: QWidget):
             filepaths = dialog.getOpenFileNames(
                 widget, 
                 f'Select WADs',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'WAD Files (*.wad.client)'
             )
             if len(filepaths[0]) > 0:
@@ -998,7 +1023,7 @@ def build_hash_helper(widget: QWidget):
             dirpath = dialog.getExistingDirectory(
                 widget,
                 f'Select Folder',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
             )
             if dirpath != '':
                 for root, dirs, files in os.walk(dirpath):
@@ -1137,7 +1162,7 @@ def build_mask_viewer(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             title,
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'{file_type} Files (*.{file_type.lower()})'
         )
         if len(filepath[0]) > 0:
@@ -1249,7 +1274,7 @@ def build_mask_viewer(widget: QWidget):
         filepath = dialog.getSaveFileName(
             widget, 
             'Save Animation BIN as',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'BIN Files (*.bin)'
         )
         if len(filepath[0]) > 0:
@@ -1295,11 +1320,11 @@ Hover mouse on button to see functions description.
     """)
     layout2.addWidget(label, stretch=99)
     checkbox = QCheckBox()
-    checkbox.setChecked(setting.get('hapiBin.backup', True))
+    checkbox.setChecked(stash.fetch('hapiBin.backup', True))
     checkbox.setText('💿 Backup file')
     def backup_cmd():
-        setting.set('hapiBin.backup', checkbox.isChecked())
-        setting.save()
+        stash.store('hapiBin.backup', checkbox.isChecked())
+        stash.save()
     checkbox.clicked.connect(backup_cmd)
     layout2.addWidget(checkbox, stretch=1)
     layout.addLayout(layout2)
@@ -1312,7 +1337,7 @@ Hover mouse on button to see functions description.
             filepaths = dialog.getOpenFileName(
                 widget, 
                 f'Select BINs',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'BIN Files (*.bin)'
             )
             if len(filepaths[0]) > 0:
@@ -1321,7 +1346,7 @@ Hover mouse on button to see functions description.
             dirpath = dialog.getExistingDirectory(
                 widget,
                 f'Select Folder',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
             )
             if dirpath != '':
                 final_path = dirpath
@@ -1358,7 +1383,7 @@ Hover mouse on button to see functions description.
                 dst=dst_line.text(),
                 hp_command=hp_command, 
                 require_dst=require_dst, 
-                backup=setting.get('hapiBin.backup', 1)
+                backup=stash.fetch('hapiBin.backup', 1)
             )
         
         helper.SafeThread.start('hapiBin', run_hp_thrd)
@@ -1396,7 +1421,7 @@ def build_no_skin(widget: QWidget):
     layout3 = QHBoxLayout()
     champs_line = QLineEdit()
     layout3.addWidget(champs_line, stretch=1)
-    game_folder = setting.get('game_folder', '')
+    game_folder = stash.fetch('game_folder', '')
     if game_folder != '':
         champs_line.setText(game_folder+'/DATA/FINAL/Champions')
     browse_button = QToolButton()
@@ -1406,7 +1431,7 @@ def build_no_skin(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             f'Select Champions Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         )
         if dirpath != '':
             final_path = dirpath
@@ -1428,7 +1453,7 @@ def build_no_skin(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             f'Select Output Fantome Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         )
         if dirpath != '':
             def no_skin_thrd():
@@ -1468,7 +1493,7 @@ def build_no_skin(widget: QWidget):
         filepaths = dialog.getOpenFileName(
             widget, 
             f'Select Skin0 BIN',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'BIN Files (*.bin)'
         )
         if len(filepaths[0]) > 0:
@@ -1490,7 +1515,7 @@ def build_no_skin(widget: QWidget):
         filepaths = dialog.getOpenFileNames(
             widget, 
             f'Select SkinX BINs',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'BIN Files (*.bin)'
         )
         if len(filepaths[0]) > 0:
@@ -1517,10 +1542,10 @@ def build_no_skin(widget: QWidget):
     tab_widget.addTab(tab2, '⭕ Lite')
 
     # save load tab_index
-    tab_widget.setCurrentIndex(setting.get('qtGUI.no_skin.tab_index', 0))
+    tab_widget.setCurrentIndex(stash.fetch('qtGUI.no_skin.tab_index', 0))
     def currentChanged(tab_index):
-        setting.set('qtGUI.no_skin.tab_index', tab_index)
-        setting.save()
+        stash.store('qtGUI.no_skin.tab_index', tab_index)
+        stash.save()
     tab_widget.currentChanged.connect(currentChanged)
 
     layout.addWidget(tab_widget, stretch=1)
@@ -1644,18 +1669,18 @@ def build_bumpath(widget: QWidget):
     layout7.addWidget(reset_button)
     ignore_checkbox = QCheckBox()
     ignore_checkbox.setText('🚫 Ignore Missing Files')
-    ignore_checkbox.setChecked(setting.get('bumpath.ignore_missing', False))
+    ignore_checkbox.setChecked(stash.fetch('bumpath.ignore_missing', False))
     def ignore_cmd():
-        setting.set('bumpath.ignore_missing', ignore_checkbox.isChecked())
-        setting.save()
+        stash.store('bumpath.ignore_missing', ignore_checkbox.isChecked())
+        stash.save()
     ignore_checkbox.clicked.connect(ignore_cmd)
     layout7.addWidget(ignore_checkbox)
     combine_checkbox = QCheckBox()
     combine_checkbox.setText('🧬 Combine Linked BINs to Source BINs')
-    combine_checkbox.setChecked(setting.get('bumpath.combine_linked', False))
+    combine_checkbox.setChecked(stash.fetch('bumpath.combine_linked', False))
     def combine_cmd():
-        setting.set('bumpath.combine_linked', combine_checkbox.isChecked())
-        setting.save()
+        stash.store('bumpath.combine_linked', combine_checkbox.isChecked())
+        stash.save()
     combine_checkbox.clicked.connect(combine_cmd)
     layout7.addWidget(combine_checkbox)
     layout7.addStretch()
@@ -1681,7 +1706,7 @@ def build_bumpath(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget, 
             'Select Source Folder',
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             bum.add_source_dirs([dirpath])
@@ -1829,11 +1854,11 @@ def build_bumpath(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget, 
             'Select Output Folder',
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             def bum_thrd(): 
-                bum.bum(dirpath, setting.get('bumpath.ignore_missing', False), setting.get('bumpath.combine_linked', False))
+                bum.bum(dirpath, stash.fetch('bumpath.ignore_missing', False), stash.fetch('bumpath.combine_linked', False))
             helper.SafeThread.start('bumpath', bum_thrd)
             
     bum_button.clicked.connect(bum_cmd)
@@ -1863,7 +1888,7 @@ def build_wad_tool(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             'Select WAD',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'WAD Files (*.wad.client)'
         )
         if len(filepath[0]) > 0:
@@ -1884,7 +1909,7 @@ def build_wad_tool(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget, 
             'Select Folder',
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             def wad_thrd(): 
@@ -1960,7 +1985,7 @@ def build_wad_tool(widget: QWidget):
             filepaths = dialog.getOpenFileNames(
                 widget, 
                 f'Select WADs',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'WAD Files (*.wad.client)'
             )
             if len(filepaths[0]) > 0:
@@ -1969,7 +1994,7 @@ def build_wad_tool(widget: QWidget):
             dirpath = dialog.getExistingDirectory(
                 widget,
                 f'Select Folder',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
             )
             if dirpath != '':
                 for root, dirs, files in os.walk(dirpath):
@@ -2039,7 +2064,7 @@ def build_wad_tool(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             f'Select Output Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         )
         if dirpath != '':
             wad_paths = wad_text.toPlainText().split('\n')
@@ -2098,11 +2123,11 @@ def build_sborf(widget: QWidget):
     layout = QVBoxLayout()
     # backup
     checkbox = QCheckBox()
-    checkbox.setChecked(setting.get('sborf.backup', True))
+    checkbox.setChecked(stash.fetch('sborf.backup', True))
     checkbox.setText('💿 Backup file')
     def backup_cmd():
-        setting.set('sborf.backup', checkbox.isChecked())
-        setting.save()
+        stash.store('sborf.backup', checkbox.isChecked())
+        stash.save()
     checkbox.clicked.connect(backup_cmd)
     layout.addWidget(checkbox, alignment=Qt.AlignmentFlag.AlignLeft)
     # browse layout
@@ -2117,7 +2142,7 @@ def build_sborf(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             title,
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'{file_type} Files (*.{file_type.lower()})'
         )
         if len(filepath[0]) > 0:
@@ -2196,7 +2221,7 @@ Throw exception if total joints = your SKL joints + removed joints > 256.',
             skn_line.text(),
             riot_skl_line.text(),
             riot_skn_line.text(),
-            setting.get('sborf.backup', True),
+            stash.fetch('sborf.backup', True),
             False
         )
     )
@@ -2214,7 +2239,7 @@ You may need to use custom animation BIN MaskData tho.
             skn_line.text(),
             riot_skl_line.text(),
             riot_skn_line.text(),
-            setting.get('sborf.backup', True),
+            stash.fetch('sborf.backup', True),
             True
         )
     )
@@ -2232,7 +2257,7 @@ New custom joints will have weight set to 0.0.
             anm_bin_line.text(),
             riot_skl_line.text(),
             riot_anm_bin_line.text(),
-            setting.get('sborf.backup', True),
+            stash.fetch('sborf.backup', True),
         )
     )
     layout.addStretch()
@@ -2253,7 +2278,7 @@ def build_lemon3d(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             title,
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'{file_type} Files (*.{file_type.lower()})'
         )
         if len(filepath[0]) > 0:
@@ -2265,7 +2290,7 @@ def build_lemon3d(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget, 
             title,
-            setting.get('qtGUI.default_folder', '')
+            stash.fetch('qtGUI.default_folder', '')
         )
         if dirpath != '':
             final_path = dirpath
@@ -2373,7 +2398,7 @@ Note: lemon3d is part of LtMAO so do not delete/move LtMAO,
         dirpath = dialog.getExistingDirectory(
             widget,
             f'Select Documents/maya/<version> Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         )
         if dirpath != '':
             lemon_maya.install_plugin(dirpath.replace('\\', '/'))
@@ -2384,10 +2409,10 @@ Note: lemon3d is part of LtMAO so do not delete/move LtMAO,
     tab_widget.addTab(tab2, '🔥 maya')
 
     # save load tab_index
-    tab_widget.setCurrentIndex(setting.get('qtGUI.lemon3d.tab_index', 0))
+    tab_widget.setCurrentIndex(stash.fetch('qtGUI.lemon3d.tab_index', 0))
     def currentChanged(tab_index):
-        setting.set('qtGUI.lemon3d.tab_index', tab_index)
-        setting.save()
+        stash.store('qtGUI.lemon3d.tab_index', tab_index)
+        stash.save()
     tab_widget.currentChanged.connect(currentChanged)
 
     layout.addWidget(tab_widget, stretch=1)
@@ -2414,7 +2439,7 @@ def build_texsmart(widget: QWidget):
             filepaths = dialog.getOpenFileNames(
                 widget, 
                 f'Select {input_type}s',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'{input_type} Files (*.{input_type})'
             )
             if len(filepaths[0]) > 0:
@@ -2423,7 +2448,7 @@ def build_texsmart(widget: QWidget):
             dirpath = dialog.getExistingDirectory(
                 widget,
                 f'Select Folder',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
             )
             if dirpath != '':
                 for root, dirs, files in os.walk(dirpath):
@@ -2543,7 +2568,7 @@ def build_bnk_tool(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             'Select Audio BNK/WPK',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'BNK/WPK Files (*.bnk *.wpk)'
         )
         if len(filepath[0]) > 0:
@@ -2563,7 +2588,7 @@ def build_bnk_tool(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             'Select Event BNK',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'BNK Files (*.bnk)'
         )
         if len(filepath[0]) > 0:
@@ -2582,7 +2607,7 @@ def build_bnk_tool(widget: QWidget):
         filepath = dialog.getOpenFileName(
             widget, 
             'Select BIN',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
             f'BIN Files (*.bin)'
         )
         if len(filepath[0]) > 0:
@@ -2632,7 +2657,7 @@ def build_bnk_tool(widget: QWidget):
             audio_path=audio_line.text(),
             events_path=event_line.text(),
             bin_path=bin_line.text(),
-            volume=setting.get('bnk_tool.volume', 0.5)
+            volume=stash.fetch('bnk_tool.volume', 0.5)
         )
         inspector.unpack(inspector.get_cache_dir())
         
@@ -2704,7 +2729,7 @@ def build_bnk_tool(widget: QWidget):
             filepath = dialog.getSaveFileName(
                 widget, 
                 'Save Audio BNK as',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'BNK (*.bnk)'
             )
             if len(filepath[0]) > 0:
@@ -2713,7 +2738,7 @@ def build_bnk_tool(widget: QWidget):
             filepath = dialog.getSaveFileName(
                 widget, 
                 'Save Audio WPK as',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'WPK (*.wpk)'
             )
             if len(filepath[0]) > 0:
@@ -2737,7 +2762,7 @@ def build_bnk_tool(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             f'Select Output Fantome Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         )
         if dirpath != '':
             def extract_thrd():
@@ -2771,7 +2796,7 @@ def build_bnk_tool(widget: QWidget):
             filepath = dialog.getOpenFileNames(
                 widget, 
                 'Select WEM',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'WEM Files (*.wem)'
             )
             if len(filepath[0]) > 0:
@@ -2803,7 +2828,7 @@ def build_bnk_tool(widget: QWidget):
                 text = select_index[-1].data()
                 if text.startswith('🎵'):
                     wem_id = text[2:]
-                    play_thrd = lambda: app.inspector.play(wem_id, setting.get('bnk_tool.stop_previous', True))
+                    play_thrd = lambda: app.inspector.play(wem_id, stash.fetch('bnk_tool.stop_previous', True))
                     helper.SafeThread.start(f'bnk_tool.play_{wem_id}_{time.time()}', play_thrd)
         treeview.selectionModel().selectedIndexes()[-1].data
     button.clicked.connect(play_selected)
@@ -2831,7 +2856,7 @@ def build_bnk_tool(widget: QWidget):
     # autoplay thread  
     def autoplay_thread():
         fixed_delta_time = 0.0166
-        while setting.get('bnk_tool.auto_play', True):
+        while stash.fetch('bnk_tool.auto_play', True):
             if app.inspector != None:
                 if app.is_selecting:
                     if app.select_cd >= 0.0:
@@ -2840,20 +2865,20 @@ def build_bnk_tool(widget: QWidget):
                         if app.selected_wem_id != None:
                             helper.SafeThread.start(
                                 f'{app.selected_wem_id}{app.select_cd}{time.time}',
-                                lambda: app.inspector.play(app.selected_wem_id, setting.get('bnk_tool.stop_previous', True))
+                                lambda: app.inspector.play(app.selected_wem_id, stash.fetch('bnk_tool.stop_previous', True))
                             )
                         app.select_cd = 0.0
                         app.is_selecting = False
             time.sleep(fixed_delta_time)
     # autoplay checkbox
     auto_playcheckbox = QCheckBox()
-    auto_playcheckbox.setChecked(setting.get('bnk_tool.auto_play', True))
+    auto_playcheckbox.setChecked(stash.fetch('bnk_tool.auto_play', True))
     auto_playcheckbox.setText('🔁 Auto play')
     auto_playcheckbox.setMinimumWidth(230)
     def autoplay_checkbox_cmd():
-        setting.set('bnk_tool.auto_play', auto_playcheckbox.isChecked())
-        setting.save()
-        if setting.get('bnk_tool.auto_play', True):
+        stash.store('bnk_tool.auto_play', auto_playcheckbox.isChecked())
+        stash.save()
+        if stash.fetch('bnk_tool.auto_play', True):
             helper.SafeThread.start('bnk_tool.auto_play', autoplay_thread)
     auto_playcheckbox.clicked.connect(autoplay_checkbox_cmd)
     layout3.addWidget(auto_playcheckbox)
@@ -2861,7 +2886,7 @@ def build_bnk_tool(widget: QWidget):
     def autoplay_select_cmd(current, previous):
         if app.inspector == None:
             return
-        if setting.get('bnk_tool.auto_play', True) :
+        if stash.fetch('bnk_tool.auto_play', True) :
             text = current.data()
             if text != None and text.startswith('🎵'): 
                 wem_id = text[2:]
@@ -2871,17 +2896,17 @@ def build_bnk_tool(widget: QWidget):
     treeview.selectionModel().currentChanged.connect(autoplay_select_cmd)
     # start the autoplay event
     reset_autoplay_values()
-    if setting.get('bnk_tool.auto_play', True):
+    if stash.fetch('bnk_tool.auto_play', True):
         helper.SafeThread.start('bnk_tool.auto_play', autoplay_thread)
 
     # play one by one
     stopprev_checkbox = QCheckBox()
-    stopprev_checkbox.setChecked(setting.get('bnk_tool.stop_previous', True))
+    stopprev_checkbox.setChecked(stash.fetch('bnk_tool.stop_previous', True))
     stopprev_checkbox.setText('⏭️ Stop previous sound')
     stopprev_checkbox.setMinimumWidth(230)
     def stopprev_checkbox_cmd():
-        setting.set('bnk_tool.stop_previous', stopprev_checkbox.isChecked())
-        setting.save()
+        stash.store('bnk_tool.stop_previous', stopprev_checkbox.isChecked())
+        stash.save()
     stopprev_checkbox.clicked.connect(stopprev_checkbox_cmd)
     layout3.addWidget(stopprev_checkbox)
 
@@ -2889,13 +2914,13 @@ def build_bnk_tool(widget: QWidget):
     volume_slider = QSlider()
     volume_slider.setOrientation(Qt.Orientation.Horizontal)
     volume_slider.setRange(0, 100)
-    volume_slider.setValue(int(setting.get('bnk_tool.volume', 0.5)*100))
+    volume_slider.setValue(int(stash.fetch('bnk_tool.volume', 0.5)*100))
     def volume_changed(value):
         volume_factor = float(value / 100)
         if app.inspector != None:
             app.inspector.volume = volume_factor
-        setting.set('bnk_tool.volume', volume_factor)
-        setting.save()
+        stash.store('bnk_tool.volume', volume_factor)
+        stash.save()
     volume_slider.valueChanged.connect(volume_changed)
     layout3.addWidget(volume_slider)
     
@@ -2930,7 +2955,7 @@ def build_wiwawe(widget: QWidget):
             filepaths = dialog.getOpenFileNames(
                 widget, 
                 f'Select {input_type}s',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
                 f'{input_type} Files (*.{input_type})'
             )
             if len(filepaths[0]) > 0:
@@ -2939,7 +2964,7 @@ def build_wiwawe(widget: QWidget):
             dirpath = dialog.getExistingDirectory(
                 widget,
                 f'Select Folder',
-                setting.get('qtGUI.default_folder', ''),
+                stash.fetch('qtGUI.default_folder', ''),
             )
             if dirpath != '':
                 for root, dirs, files in os.walk(dirpath):
@@ -3043,8 +3068,8 @@ def build_winLT(widget: QWidget):
     # treewidget
     def set_context_data(shell_id, command_id, value):
         winLT.submenus[shell_id][command_id] = value
-        setting.set(f'winLT.{shell_id}.{command_id}', value)
-        setting.save()
+        stash.store(f'winLT.{shell_id}.{command_id}', value)
+        stash.save()
     layout2 = QHBoxLayout()
     treewidget = QTreeWidget()
     treewidget.setHeaderHidden(True)
@@ -3057,7 +3082,7 @@ def build_winLT(widget: QWidget):
             command_item = QTreeWidgetItem(shell_item)
             command_item.setText(0, '')
             checkbox = QCheckBox(f'🔧 {winLT.commands[command_id]["desc"]}')
-            checkbox_value = setting.get(f'winLT.{shell_id}.{command_id}', True)
+            checkbox_value = stash.fetch(f'winLT.{shell_id}.{command_id}', True)
             checkbox.setChecked(checkbox_value)
             winLT.submenus[shell_id][command_id] = checkbox_value
             checkbox.clicked.connect(lambda value, shell_id=shell_id, command_id=command_id: set_context_data(shell_id, command_id, value))
@@ -3237,7 +3262,7 @@ def build_mandown(widget: QWidget):
         output_dir = dialog.getExistingDirectory(
             widget,
             f'Select Output Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         ).replace('/', '\\')
         if output_dir != '':
             # get all check files
@@ -3312,7 +3337,7 @@ def build_setting(widget: QWidget):
     theme_box = QComboBox()
     theme_box.setMinimumWidth(200)
     theme_box.addItems([f.name for f in os.scandir('./res/themes') if f.is_dir()])
-    theme_box.setCurrentText(setting.get('qtGUI.theme_name', 'raora'))
+    theme_box.setCurrentText(stash.fetch('qtGUI.theme_name', 'raora'))
     def change_theme():
         # init theme
         theme_name = theme_box.currentText()
@@ -3323,7 +3348,7 @@ def build_setting(widget: QWidget):
             tab_widget.setStyleSheet(app.tab_stylesheet)
         app.icon_label.setPixmap(QPixmap(app.theme_paths['titlebaricon']).scaled(118, 40, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
         # set background gif
-        if setting.get('qtGUI.animated_background', True):
+        if stash.fetch('qtGUI.animated_background', True):
             app.background_widget.setMovie(QMovie(app.theme_paths['background']))
             app.background_widget.setScaledContents(True)
             app.background_widget.movie().start()
@@ -3336,18 +3361,18 @@ def build_setting(widget: QWidget):
         # update shortcut
         winLT.update_shortcuts(app.theme_paths['appicon'])
         # save theme
-        setting.set('qtGUI.theme_name', theme_name)
-        setting.save()
+        stash.store('qtGUI.theme_name', theme_name)
+        stash.save()
     theme_box.currentTextChanged.connect(change_theme)
     layout2.addWidget(theme_box)
 
     checkbox = QCheckBox()
     checkbox.setText('🎞️ Animated background')
-    checkbox.setChecked(setting.get('qtGUI.animated_background', True))
+    checkbox.setChecked(stash.fetch('qtGUI.animated_background', True))
     def animated_background_cmd():
-        setting.set('qtGUI.animated_background', checkbox.isChecked())
-        setting.save()
-        if setting.get('qtGUI.animated_background', True):
+        stash.store('qtGUI.animated_background', checkbox.isChecked())
+        stash.save()
+        if stash.fetch('qtGUI.animated_background', True):
             app.background_widget.setMovie(QMovie(app.theme_paths['background']))
             app.background_widget.setScaledContents(True)
             app.background_widget.movie().start()
@@ -3368,17 +3393,17 @@ def build_setting(widget: QWidget):
         dirpath = dialog.getExistingDirectory(
             widget,
             f'Select Folder',
-            setting.get('qtGUI.default_folder', ''),
+            stash.fetch('qtGUI.default_folder', ''),
         )
         if dirpath == '':
             app.default_dir_label.setText('Default path for all file/dir dialog.')
         else:
             app.default_dir_label.setText(dirpath)
-        setting.set('qtGUI.default_folder', dirpath)
-        setting.save()
+        stash.store('qtGUI.default_folder', dirpath)
+        stash.save()
     button.clicked.connect(default_dir_cmd)
     layout2.addWidget(button)
-    app.default_dir_label = label = QLabel(setting.get('qtGUI.default_folder', 'Default path for all file/dir dialog.'))
+    app.default_dir_label = label = QLabel(stash.fetch('qtGUI.default_folder', 'Default path for all file/dir dialog.'))
     label.setStyleSheet('background-color: transparent')
     layout2.addWidget(label)
     layout2.addStretch()

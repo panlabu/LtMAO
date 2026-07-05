@@ -1,5 +1,5 @@
 import os, os.path, json, datetime, shutil
-from . import lepath, setting, Ritoddstex, tools
+from . import lepath, stash, Ritoddstex, tools
 
 block_and_stream_process_output = tools.block_and_stream_process_output
 
@@ -154,7 +154,7 @@ def import_fantome(fantome_path, mod_path):
     p = tools.CSLOL.import_fantome(
         src=fantome_path,
         dst=lepath.abs(lepath.join(raw_dir, mod_path)),
-        game=setting.get('game_folder', '')
+        game=stash.fetch('game_folder', '')
     )
     tools.block_and_stream_process_output(p, 'cslmao: ')
     return p
@@ -163,7 +163,7 @@ def export_fantome(mod_path, fantome_path):
     p = tools.CSLOL.export_fantome(
         src=mod_path,
         dst=fantome_path,
-        game=setting.get('game_folder', '')
+        game=stash.fetch('game_folder', '')
     )
     tools.block_and_stream_process_output(p, 'cslmao: ')
     return p
@@ -179,9 +179,9 @@ def make_overlay(profile):
     return tools.CSLOL.make_overlay(
         src=lepath.abs(raw_dir),
         overlay=lepath.abs(overlay),
-        game=setting.get('game_folder', ''),
+        game=stash.fetch('game_folder', ''),
         mods=paths,
-        noTFT=not setting.get('cslmao.tft', False)
+        noTFT=not stash.fetch('cslmao.tft', False)
     )
 
 def run_overlay(profile):
@@ -189,7 +189,7 @@ def run_overlay(profile):
     return tools.CSLOL.run_overlay(
         overlay=overlay,
         config=config_file,
-        game=setting.get('game_folder', '')
+        game=stash.fetch('game_folder', '')
     )
 
 def diagnose():
@@ -212,10 +212,10 @@ def convert_raw_files_before_run():
                         tex_file = lepath.ext(dds_file, '.dds', '.tex')
                         dds2tex_files.append((dds_file, tex_file))
     # converts
-    if setting.get('cslmao.auto_py2bin', False):
+    if stash.fetch('cslmao.auto_py2bin', False):
         tools.RITOBIN.run([path for pair in py2bin_files for path in pair])
         print(f'cslmao: Finish: Convert {len(py2bin_files)} files from PY to BIN.')
-    if setting.get('cslmao.auto_dds2tex', False):
+    if stash.fetch('cslmao.auto_dds2tex', False):
         for dds_file, tex_file in dds2tex_files:
             try:
                 Ritoddstex.dds2tex(dds_file, tex_file)

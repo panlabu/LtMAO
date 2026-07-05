@@ -5,7 +5,7 @@ import gzip
 # not safe because external modules
 try: 
     import pyzstd
-except:
+except ImportError:
     print('Warning: pyRitoFile.wad failed to import pyzstd.')
 
 
@@ -84,12 +84,12 @@ def is_hex(s):
     try: 
         int(s, 16)
         return True
-    except:
+    except ValueError:
         return False
     
-def unhash(wad, hashtable):
+def unhash(archive, hashtable):
     get = hashtable.get
-    for chunk in wad.chunks:
+    for chunk in archive.chunks:
         chunk._hash = get(chunk.hash, f'{chunk.hash:016x}')
         if '.' in chunk._hash and chunk.extension is None:
             for ext in exts:
@@ -105,7 +105,7 @@ def read_data(chunk, bs):
         chunk_data = gzip.decompress(chunk_data)
     elif chunk.compression_type == 3:
         chunk_data = pyzstd.decompress(chunk_data)
-     # no subchunk implement yet
+     # no subchunk implemented yet
     elif chunk.compression_type == 4 and chunk_data[:4] == b'\x28\xb5\x2f\xfd':
         chunk_data = pyzstd.decompress(chunk_data)
     # guess extension
@@ -123,23 +123,18 @@ def write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks=None
         chunk.compression_type = 3
     chunk.compressed_size = len(chunk_data)
     chunk.checksum = hash_xxh3_64(chunk_data)
+    chunk.duplicated = False
 
     # check duplicated using previous_chunks: dict
-    if previous_chunks:
+    if previous_chunks is not None:
         key = (chunk.checksum, chunk.compressed_size, chunk.decompressed_size)
         if key not in previous_chunks:
-            # chunk is unque, just add
-            previous_chunks[key] = (chunk.id, chunk)
+            # chunk is unique, just add
+            previous_chunks[key] = chunk
         else:
             # chunk is duped, copy offset
             chunk.duplicated = True
-            duped_id, duped_chunk = previous_chunks[key]
-            if not duped_chunk.duplicated:
-                # if duped chunk was unique: reset duplicated
-                duped_chunk.duplicated = True
-                bs.seek(272 + duped_id * 32 + 21) # hack
-                bs.write(pack('<?', duped_chunk.duplicated))
-            chunk.offset = duped_chunk.offset
+            chunk.offset = previous_chunks[key].offset
     # chunk is unique, save offset and write data
     if not chunk.duplicated:
         bs.seek(0, 2)
@@ -175,7 +170,7 @@ class Chunk:
         self.checksum = checksum
         self.extension = extension
 
-class Wad:
+class Archive:
     __slots__ = ('signature', 'version', 'chunks')
 
     def __init__(self, signature, version, chunks):
@@ -188,18 +183,18 @@ def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
         # header
-        signature = bs.read(2).decode()
-        if signature != 'RW':
-            raise Exception(f'pyRitoFile: Error: Read WAD {path}: Wrong file signature: {signature}')
+        signature = bs.read(2)
+        if signature != b'RW':
+            raise Exception(f'pyRitoFile: Error: Read WAD: Wrong file signature: {signature}')
         major, minor = unpack('<BB', bs.read(2))
         if major > 3:
-            raise Exception(f'pyRitoFile: Error: Read WAD {path}: Unsupported file version: {major}.{minor}')
+            raise Exception(f'pyRitoFile: Error: Read WAD: Unsupported file version: {major}.{minor}')
         if major == 1:
-            bs.seek(8)
+            bs.seek(4, 1)
         elif major == 2:
-            bs.seek(100)
+            bs.seek(96, 1)
         elif major == 3:
-            bs.seek(268)
+            bs.seek(264, 1)
         # chunks
         chunk_count = int.from_bytes(bs.read(4), 'little')
         chunks = [
@@ -211,7 +206,7 @@ def read(path):
                 compressed_size,
                 decompressed_size,
                 type & 15,
-                # these value only in v2+, no check until i found a wad v1
+                # these values only in v2+, no check until i found a wad v1
                 # no subchunk of v3.4 yet
                 duplicated, 
                 checksum,
@@ -220,20 +215,20 @@ def read(path):
             for chunk_id, (hash, offset, compressed_size, decompressed_size, type, duplicated, checksum) in enumerate(iter_unpack('<Q3IB?2xQ', bs.read(chunk_count*32)))
         ]
         
-    return Wad(
+    return Archive(
         signature,
         (major, minor),
         chunks
     )
 
-def write(wad, path=None):
+def write(archive, path=None):
     stream = BytesIO() if path is None else open(path, 'wb')
     with stream as bs:
         # header
-        bs.write(pack('<2sBB268s', 'RW', 3, 3, b''))
+        bs.write(pack('<2sBB264s', b'RW', 3, 3, b''))
         # chunks
-        bs.write(pack('<I', len(wad.chunks)))
-        for chunk in wad.chunks:
+        bs.write(pack('<I', len(archive.chunks)))
+        for chunk in archive.chunks:
             bs.write(pack(
                 '<Q3IB?HQ',
                 chunk.hash,

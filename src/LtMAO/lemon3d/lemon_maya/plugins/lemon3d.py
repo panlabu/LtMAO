@@ -1,86 +1,63 @@
-from maya.OpenMaya import *
-from maya.OpenMayaMPx import *
+import traceback, sys
+from maya import OpenMayaMPx as omMPx
 
-def try_cmd(cmd):
+def print_traceback(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except:
+            print(traceback.format_exc())
+            raise
+    return wrapper
+
+@print_traceback
+def register(mobject):
+    ltmao_dir = omMPx.MFnPlugin(mobject, 'panlabu', '0.0.0').loadPath().replace('\\', '/').replace('/src/LtMAO/lemon3d/lemon_maya/plugins', '')
+    # pythonpath can be overrided by windows environment variables
+    # when that happend, maya.env pythonpath get ignored
+    # so this part check and add ltmao paths to pythonpath
+    pythonpaths = [f'{ltmao_dir}/src', f'{ltmao_dir}/cpy/Lib/site-packages']
+    sys.path.extend([p for p in pythonpaths if p not in sys.path])
+    # read ltmao version file and create plugin
     try:
-        cmd()
-        return True
-    except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        raise e
-
-def ensure_pythonpaths():
-    # pythonpath can be overrided by windows environment variable
-    # in that case maya.env's pythonpath will be completely ignored
-    # so this part manually add ltmao to python paths 
-    import inspect
-    import sys
-    lemon3d_file = inspect.getfile(inspect.currentframe()).replace('\\', '/')
-    ltmao_dir = lemon3d_file.replace('/src/LtMAO/lemon3d/lemon_maya/plugins/lemon3d.py', '')
-    pythonpaths = [f'{ltmao_dir}/src', f'{ltmao_dir}/epython/Lib/site-packages']
-    for pythonpath in pythonpaths:
-        if pythonpath not in sys.path:
-            sys.path.append(pythonpath)
-    # extra: set some global values 
-    global AUTHOR, VERSION
-    AUTHOR = 'panlabu'
-    version_file = ltmao_dir+'/version'
-    try: 
-        with open(version_file, 'r', encoding='utf-8') as f:
-            VERSION = f.read()
+        with open(f'{ltmao_dir}/version', 'r') as f:
+            version = f.read()
     except:
-        VERSION = 'Unknown'
+        version = 'unknown'
+    plugin = omMPx.MFnPlugin(mobject, 'panlabu', version)
+    # register translators
+    from LtMAO.lemon3d.lemon_maya.plugins.translator import skin#, anm, scb, mapgeo
+    translators = (
+        skin.sknImporter, skin.skinExporter, skin.sklImporter, skin.sklExporter,
+        #anm.anmImporter, anm.anmExporter,
+        #scb.scbImporter, scb.scoImporter, scb.scbExporter,
+        #mapgeo.mapgeoImporter, mapgeo.mapgeoExporter
+    )
+    for translator in translators:
+        plugin.registerFileTranslator(
+            translator.name, 
+            translator.pixmap, 
+            translator.creator,
+            translator.options_script,
+            translator.options_string,
+            False
+        )
 
-try_cmd(ensure_pythonpaths)
+@print_traceback
+def deregister(mobject):
+    plugin = omMPx.MFnPlugin(mobject)
+    from LtMAO.lemon3d.lemon_maya.plugins.translator import skin#, anm, scb, mapgeo
+    translators = (
+        skin.sknImporter, skin.skinExporter, skin.sklImporter, skin.sklExporter,
+        #anm.anmImporter, anm.anmExporter,
+        #scb.scbImporter, scb.scoImporter, scb.scbExporter,
+        #mapgeo.mapgeoImporter, mapgeo.mapgeoExporter
+    )
+    for translator in translators:
+        plugin.deregisterFileTranslator(translator.name)
 
-def initializePlugin(obj):
-    def register_cmd(obj):
-        plugin = MFnPlugin(obj, AUTHOR, VERSION)
-        # skin
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.skin import SKNImporter, SKLImporter, SkinExporter, SKLExporter
-        plugin.registerFileTranslator(SKNImporter.name, '', SKNImporter.creator, '', '', True)
-        plugin.registerFileTranslator(SkinExporter.name, '', SkinExporter.creator, '', '', True)
-        plugin.registerFileTranslator(SKLImporter.name, '', SKLImporter.creator, '', '', True)
-        plugin.registerFileTranslator(SKLExporter.name, '', SKLExporter.creator, '', '', True)
-        # anm
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.anm import ANMImporter, ANMExporter
-        plugin.registerFileTranslator(ANMImporter.name, '', ANMImporter.creator, 'ANMImporterOptions', 'reset_channel=1', True)
-        plugin.registerFileTranslator(ANMExporter.name, '', ANMExporter.creator, '', '', True)
-        # so
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.so import SCOImporter, SCOExporter, SCBImporter, SCBExporter
-        plugin.registerFileTranslator(SCOImporter.name, '', SCOImporter.creator, '', '', True)
-        plugin.registerFileTranslator(SCOExporter.name, '', SCOExporter.creator, '', '', True)
-        plugin.registerFileTranslator(SCBImporter.name, '', SCBImporter.creator, '', '', True)
-        plugin.registerFileTranslator(SCBExporter.name, '', SCBExporter.creator, 'SCBExporterOptions', 'scb_flags=HasLocalOriginLocatorAndPivot', True)
-        # mapgeo
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.mapgeo import MAPGEOImporter, MAPGEOExporter
-        plugin.registerFileTranslator(MAPGEOImporter.name, '', MAPGEOImporter.creator, '', '', True)
-        plugin.registerFileTranslator(MAPGEOExporter.name, '', MAPGEOExporter.creator, 'MAPGEOExporterOptions', 'version=17;float16=0', True)
-    
-    try_cmd(lambda: register_cmd(obj))
-def uninitializePlugin(obj):
-    def deregister(obj):
-        plugin = MFnPlugin(obj)
-        #skin
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.skin import SKNImporter, SKLImporter, SkinExporter, SKLExporter
-        plugin.deregisterFileTranslator(SKNImporter.name)
-        plugin.deregisterFileTranslator(SkinExporter.name)
-        plugin.deregisterFileTranslator(SKLImporter.name)
-        plugin.deregisterFileTranslator(SKLExporter.name)
-        # anm
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.anm import ANMImporter, ANMExporter
-        plugin.deregisterFileTranslator(ANMImporter.name)
-        plugin.deregisterFileTranslator(ANMExporter.name)
-        # so
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.so import SCOImporter, SCOExporter, SCBImporter, SCBExporter
-        plugin.deregisterFileTranslator(SCOImporter.name)
-        plugin.deregisterFileTranslator(SCOExporter.name)
-        plugin.deregisterFileTranslator(SCBImporter.name)
-        plugin.deregisterFileTranslator(SCBExporter.name)
-        # mapgeo
-        from LtMAO.lemon3d.lemon_maya.plugins.translator.mapgeo import MAPGEOImporter, MAPGEOExporter
-        plugin.deregisterFileTranslator(MAPGEOImporter.name)
-        plugin.deregisterFileTranslator(MAPGEOExporter.name)
-    
-    try_cmd(lambda: deregister(obj))
+def initializePlugin(mobject):
+    register(mobject)
+
+def uninitializePlugin(mobject):
+    deregister(mobject)

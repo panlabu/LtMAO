@@ -1,5 +1,6 @@
 from io import BytesIO
 from struct import unpack, pack
+from math import ceil
 
 format_names = {
     1: 'etc1',
@@ -31,7 +32,7 @@ class Texture:
 
 
 def read(path):
-    stream = BytesIO(path) if path is None else open(path, 'rb')
+    stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
         # header
         signature = bs.read(4)
@@ -49,14 +50,14 @@ def read(path):
             else:
                 bytes_per_block = 16
             mipmap_count = max(width, height).bit_length()
-            data = []
-            for i in reversed(range(mipmap_count)):
-                current_width = max(width // (1 << i), 1)
-                current_height = max(height // (1 << i), 1)
-                block_width = (current_width + block_size - 1) // block_size
-                block_height = (current_height + block_size - 1) // block_size
-                current_size = bytes_per_block * block_width * block_height
-                data.append(bs.read(current_size))
+            data = [
+                bs.read(
+                    bytes_per_block 
+                    * ceil(max(width >> i, 1) / block_size) 
+                    * ceil(max(height >> i, 1) / block_size)
+                )
+                for i in reversed(range(mipmap_count))
+            ]
         else:
             data = [bs.read(-1)]
 

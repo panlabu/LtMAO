@@ -1,27 +1,27 @@
 from struct import unpack, iter_unpack, pack
 from io import BytesIO
+from functools import partial
 from .maths import hash_elf, matrix4_multiply, matrix4_inverse, matrix4_decompose
 
 class Joint:
     __slots__ = (
-        'name', 'flags', 'id', 'parent', 'hash', 'radius', 'translate', 
-        'rotate', 'scale', 'inversed_bind_translate', 'inversed_bind_rotate', 
-        'inversed_bind_scale', 'transform'
+        'name', 'flags', 'parent', 'hash', 'radius', 'translate', 
+        'scale', 'rotate', 'inversed_bind_translate', 'inversed_bind_scale', 
+        'inversed_bind_rotate', 'transform'
     )
 
-    def __init__(self, name, flags, id, parent, hash, radius, translate, rotate, scale, inversed_bind_translate, inversed_bind_rotate, inversed_bind_scale, transform):
+    def __init__(self, name, flags, parent, hash, radius, translate, scale, rotate, inversed_bind_translate, inversed_bind_scale, inversed_bind_rotate, transform):
         self.name = name
         self.flags = flags
-        self.id = id
         self.parent = parent
         self.hash = hash
         self.radius = radius
         self.translate = translate
-        self.rotate = rotate
         self.scale = scale
+        self.rotate = rotate
         self.inversed_bind_translate = inversed_bind_translate
-        self.inversed_bind_rotate = inversed_bind_rotate
         self.inversed_bind_scale = inversed_bind_scale
+        self.inversed_bind_rotate = inversed_bind_rotate
         self.transform = transform
 
 class Skeleton:
@@ -69,26 +69,25 @@ def read(path):
                 bs.seek(joints_offset)
                 joints = [
                     Joint(
-                        ud[25], # this is joint name offset at the moment
+                        ud[24], # this is joint name offset at the moment
                         ud[0],
                         ud[1],
                         ud[2],
                         ud[3],
-                        ud[4],
-                        (ud[5], ud[6], ud[7]),
-                        (ud[8], ud[9], ud[10]),
-                        (ud[11], ud[12], ud[13], ud[14]),
-                        (ud[15], ud[16], ud[17]),
-                        (ud[18], ud[19], ud[20]),
-                        (ud[21], ud[22], ud[23], ud[24]),
+                        (ud[4], ud[5], ud[6]),
+                        (ud[7], ud[8], ud[9]),
+                        (ud[10], ud[11], ud[12], ud[13]),
+                        (ud[14], ud[15], ud[16]),
+                        (ud[17], ud[18], ud[19]),
+                        (ud[20], ud[21], ud[22], ud[23]),
                         None 
                     )
-                    for ud in iter_unpack('<Hhh2xI21fi', bs.read(100*joint_count))
+                    for ud in iter_unpack('<H2xh2xI21fi', bs.read(100*joint_count))
                 ]
                 # read joint name with joint name asset
                 for joint_id, joint in enumerate(joints):
-                    bs.seek(100*(joint_id+1)+60+joint.name)
-                    joint.name = b''.join(iter(lambda: bs.read(1), b'\x00')).decode()
+                    bs.seek(joints_offset + 100 * joint_id + joint.name)
+                    joint.name = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
 
             # influences
             if influences_offset > 0 and influence_count > 0:
@@ -97,10 +96,10 @@ def read(path):
             # name and asset 
             if name_offset > 0:
                 bs.seek(name_offset)
-                name = b''.join(iter(lambda: bs.read(1), b'\x00')).decode()
+                name = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
             if asset_offset > 0:
                 bs.seek(asset_offset)
-                asset = b''.join(iter(lambda: bs.read(1), b'\x00')).decode()
+                asset = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
         else:
             # old skl 
             # header
@@ -116,7 +115,6 @@ def read(path):
                 Joint(
                     n:=ud[0].rstrip(b'\x00').decode(),
                     None,
-                    joint_id,
                     ud[1],
                     hash_elf(n),
                     ud[2],
@@ -145,16 +143,16 @@ def read(path):
                         1.0
                     )
                 )
-                for joint_id, ud in enumerate(iter_unpack('<32si13f', bs.read(88*joint_count)))
+                for ud in iter_unpack('<32si13f', bs.read(88*joint_count))
             ]
                 
             # transform decompose
             for joint_id, joint in enumerate(joints):
                 transform = joint.transform if joint.parent == - 1 else matrix4_multiply(joint.transform, matrix4_inverse(joints[joint.parent].transform))
 
-                joint.translate, joint.rotate, joint.scale = matrix4_decompose(transform)
+                joint.translate, joint.scale, joint.rotate = matrix4_decompose(transform)
                 inversed_bind = matrix4_inverse(joint.transform)
-                joint.inversed_bind_translate, joint.inversed_bind_rotate, joint.inversed_bind_scale = matrix4_decompose(inversed_bind)
+                joint.inversed_bind_translate, joint.inversed_bind_scale, joint.inversed_bind_rotate = matrix4_decompose(inversed_bind)
 
             # influences
             if version == 1:
@@ -214,7 +212,7 @@ def write(skeleton, path=None):
                 joint.radius,
                 *joint.translate,
                 *joint.rotate,
-                *joint.scale
+                *joint.scale,
                 *joint.inversed_bind_translate,
                 *joint.inversed_bind_rotate,
                 *joint.inversed_bind_scale,
@@ -227,7 +225,7 @@ def write(skeleton, path=None):
 
         # joint indices
         bs.seek(joint_indices_offset)
-        for joint_id, joint in enumerate(skeleton.joins):
+        for joint_id, joint in enumerate(skeleton.joints):
             bs.write(pack('<HHI', joint_id, 0, joint.hash))
 
         # file size

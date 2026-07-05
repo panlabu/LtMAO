@@ -36,9 +36,9 @@ class PreviewGUI():
         screen_size = app.primaryScreen().size()
         window.setGeometry((screen_size.width() - 1280) // 2, (screen_size.height() - 720) // 2, 1280, 720)
         # set icon
-        from .. import setting
-        setting.init()
-        theme_name = setting.get('qtGUI.theme_name', 'raora')
+        from .. import stash
+        stash.init()
+        theme_name = stash.fetch('qtGUI.theme_name', 'raora')
         appicon = f'./res/themes/{theme_name}/appicon.ico'
         window.setWindowIcon(QPixmap(appicon))
     

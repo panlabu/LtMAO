@@ -3,6 +3,7 @@ from math import sqrt, acos, sin
 try:
     from xxhash import xxh64_intdigest, xxh3_64_intdigest as hash_xxh3_64
 except:
+    hash_xxh3_64 = lambda: 0
     print('Warning: pyRitoFile.maths failed to import xxhash.')
 
 def hash_elf(s):
