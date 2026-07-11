@@ -9,7 +9,8 @@ from posixpath import (
     getsize as getsize,
     exists as exists,
     expanduser as expanduser,
-    split as split
+    split as split, 
+    dirname as dirname
 )
 
 def abs(path):

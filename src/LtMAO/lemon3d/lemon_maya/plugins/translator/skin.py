@@ -363,6 +363,16 @@ def load_skn(skn, load_options):
     group_transform = load_options.get('group_transform')
     skn_name = load_options.get('skn_name')
     skl = load_options.get('skl')
+    # material related
+    selections = om.MSelectionList()
+    selections.add('renderPartition')
+    selections.add('defaultShaderList1')
+    render_partition = om.MFnDependencyNode(selections.getDependNode(0))
+    shader_list = om.MFnDependencyNode(selections.getDependNode(1))
+    render_partition_sets = render_partition.findPlug('sets', False)
+    shader_list_shaders = shader_list.findPlug('shaders', False)
+    dg_modifier = om.MDGModifier()
+    # binding related
     if skl is not None:
         joint_names = [joint.name for joint in skl.joints]
         joint_names_set = set(joint_names)
@@ -380,7 +390,7 @@ def load_skn(skn, load_options):
         mesh_transform.create(group_transform.object())
         mesh_transform.setName(f'mesh_{submesh_name}')
 
-        # init
+        # mesh shape 
         vertex_slice = slice(submesh.vertex_start, submesh.vertex_start+submesh.vertex_count)
         submesh_positions = om.MFloatPointArray([(-x, y, z) for x, y, z in skn.vertices[0][vertex_slice]])
         index_slice = slice(submesh.index_start, submesh.index_start+submesh.index_count)
@@ -388,8 +398,6 @@ def load_skn(skn, load_options):
         min_vid = min(vids)
         submesh_indices = om.MIntArray([vid - min_vid for vid in vids])
         face_sizes = om.MIntArray(len(submesh_indices) // 3, 3)
-        
-        # mesh shape 
         mesh = om.MFnMesh()
         mesh_object = mesh.create(
             submesh_positions, 
@@ -407,7 +415,34 @@ def load_skn(skn, load_options):
         mesh.assignUVs(face_sizes, submesh_indices)
 
         # materials
-        
+        # create lambert and shading engine then get dependency node
+        lambert = dg_modifier.createNode('lambert')
+        shading_engine = dg_modifier.createNode('shadingEngine')
+        dg_modifier.renameNode(lambert, submesh_name)
+        dg_modifier.renameNode(shading_engine, f'{submesh_name}_SG')
+        lambert = om.MFnDependencyNode(lambert)
+        shading_engine = om.MFnDependencyNode(shading_engine)
+        # link lambert.message to defaultShaderList1.shaders[n]
+        dg_modifier.connect(
+            lambert.findPlug('message', False),
+            shader_list_shaders.elementByLogicalIndex(shader_list_shaders.evaluateNumElements())
+        )
+        # link shadingEngine.partition to renderPartition.sets[n]
+        dg_modifier.connect(
+            shading_engine.findPlug('partition', False), 
+            render_partition_sets.elementByLogicalIndex(render_partition_sets.evaluateNumElements())
+        )
+        # link lambert.outColor to shadingEngine.surfaceShader
+        dg_modifier.connect(
+            lambert.findPlug('outColor', False),
+            shading_engine.findPlug('surfaceShader', False)
+        )
+        # link mesh.instObjGroups[0] to shadingEninge.dagSetMembers[n]
+        shading_engine_dagSetMembers = shading_engine.findPlug('dagSetMembers', False)
+        dg_modifier.connect(
+            mesh.findPlug('instObjGroups', False).elementByLogicalIndex(0), 
+            shading_engine_dagSetMembers.elementByLogicalIndex(shading_engine_dagSetMembers.evaluateNumElements())
+        )
 
         if skl is not None:
             # bind mesh and get skincluster
@@ -420,7 +455,7 @@ def load_skn(skn, load_options):
                 bindMethod=0,
                 dropoffRate=0.1
             )
-            skin_cluster = omAnim.MFnSkinCluster(om.MItDependencyGraph(mesh_object, om.MFn.kSkinClusterFilter, om.MItDependencyGraph.kUpstream).currentItem())
+            skin_cluster = omAnim.MFnSkinCluster(om.MItDependencyGraph(mesh_object, om.MFn.kSkinClusterFilter, om.MItDependencyGraph.kUpstream).currentNode())
 
             # init 
             submesh_influences = skn.vertices[1][vertex_slice]
@@ -445,8 +480,7 @@ def load_skn(skn, load_options):
                 normalize=True
             )
 
-            # update
-            mesh.updateSurface()
+    dg_modifier.doIt()
 
 @helper.print_traceback
 def write_skn(skn_path):
@@ -495,7 +529,7 @@ def dump_skn(skl, dump_options):
         sc_iterator.resetTo(mesh.object(), om.MFn.kSkinClusterFilter, om.MItDependencyGraph.kUpstream)
         if sc_iterator.isDone():
             raise helper.FunnyError(f'SKN Exporter: No skin_cluster on {mesh.name()}, make sure the mesh is bound.')
-        skin_cluster = omAnim.MFnSkinCluster(sc_iterator.currentItem())
+        skin_cluster = omAnim.MFnSkinCluster(sc_iterator.currentNode())
 
         # check holes
         if len(mesh.getHoles()) > 0:
@@ -536,7 +570,7 @@ def dump_skn(skl, dump_options):
 
         vertex_count = mesh.numVertices
         # get points
-        positions = tuple(mesh.getPoints())
+        positions = tuple(mesh.getFloatPoints())
         # get flat weights 
         components.setCompleteData(vertex_count)
         flat_weights, influence_count = skin_cluster.getWeights(mesh.getPath(), vertex_component)

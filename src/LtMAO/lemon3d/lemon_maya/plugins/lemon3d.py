@@ -4,7 +4,7 @@ from maya import OpenMayaMPx as omMPx
 def print_traceback(func):
     def wrapper(*args, **kwargs):
         try:
-            return func(*args, **kwargs)
+            func(*args, **kwargs)
         except:
             print(traceback.format_exc())
             raise
@@ -26,11 +26,11 @@ def register(mobject):
         version = 'unknown'
     plugin = omMPx.MFnPlugin(mobject, 'panlabu', version)
     # register translators
-    from LtMAO.lemon3d.lemon_maya.plugins.translator import skin#, anm, scb, mapgeo
+    from LtMAO.lemon3d.lemon_maya.plugins.translator import skin, anm, scb#, mapgeo
     translators = (
         skin.sknImporter, skin.skinExporter, skin.sklImporter, skin.sklExporter,
-        #anm.anmImporter, anm.anmExporter,
-        #scb.scbImporter, scb.scoImporter, scb.scbExporter,
+        anm.anmImporter, anm.anmExporter,
+        scb.scbImporter, scb.scoImporter, scb.scbExporter,
         #mapgeo.mapgeoImporter, mapgeo.mapgeoExporter
     )
     for translator in translators:
@@ -46,11 +46,11 @@ def register(mobject):
 @print_traceback
 def deregister(mobject):
     plugin = omMPx.MFnPlugin(mobject)
-    from LtMAO.lemon3d.lemon_maya.plugins.translator import skin#, anm, scb, mapgeo
+    from LtMAO.lemon3d.lemon_maya.plugins.translator import skin, anm, scb#, mapgeo
     translators = (
         skin.sknImporter, skin.skinExporter, skin.sklImporter, skin.sklExporter,
-        #anm.anmImporter, anm.anmExporter,
-        #scb.scbImporter, scb.scoImporter, scb.scbExporter,
+        anm.anmImporter, anm.anmExporter,
+        scb.scbImporter, scb.scoImporter, scb.scbExporter,
         #mapgeo.mapgeoImporter, mapgeo.mapgeoExporter
     )
     for translator in translators:

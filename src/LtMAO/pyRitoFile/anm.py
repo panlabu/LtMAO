@@ -36,6 +36,7 @@ def read(path):
     with stream as bs:
         # init
         error_metrics = None
+        flags2 = 0
         # header
         signature = bs.read(8)
         version = int.from_bytes(bs.read(4), 'little')
@@ -157,7 +158,7 @@ def read(path):
                 # = keyframe * [track_count * [(joint_hash, tid, sid, rid),...]] 
                 tracks = {}
                 bs.seek(buffers_offset + 12)
-                for buffer_index, (joint_hash, tid, sid, rid) in enumerate(iter_unpack('<I3i2x', bs.read(keyframe_count*track_count*18))):
+                for buffer_index, (joint_hash, tid, sid, rid) in enumerate(iter_unpack('<I3H2x', bs.read(keyframe_count*track_count*12))):
                     keyframe = buffer_index // track_count
                     if joint_hash not in tracks:
                         tracks[joint_hash] = Track({}, {}, {})
@@ -199,9 +200,127 @@ def read(path):
     )
 
 
-def write(animation, path=None):
+def write(animation, path=None, compressed=True):
     stream = BytesIO() if path is None else open(path, 'wb')
-    with stream as bs:
+    if compressed:
+        # init
+        tx_min = ty_min = tz_min = sx_min = sy_min = sz_min = float('inf')
+        tx_max = ty_max = tz_max = sx_max = sy_max = sz_max = float('-inf')
+        tracks = animation.tracks
+        track_count = len(tracks)
+        packed_bits = [None] * track_count
+        joint_keyframes = [None] * track_count
+        all_keyframes = set()
+        for joint_index, track in enumerate(tracks.values()):
+            # packed bits
+            packed_bits[joint_index] = (
+                pack('<H', (0 << 14) | (joint_index & 16383)),
+                pack('<H', (1 << 14) | (joint_index & 16383)),
+                pack('<H', (2 << 14) | (joint_index & 16383))
+            )
+            # keyframes
+            rotate_keyframes = set(track.rotate_curve.keys())
+            translate_keyframes = set(track.translate_curve.keys())
+            scale_keyframes = set(track.scale_curve.keys())
+            joint_keyframes[joint_index] = (rotate_keyframes, translate_keyframes, scale_keyframes)
+            all_keyframes.update(rotate_keyframes, translate_keyframes, scale_keyframes)
+            # translate bound
+            for tx, ty, tz in track.translate_curve.values():
+                if tx > tx_max: tx_max = tx
+                if ty > ty_max: ty_max = ty
+                if tz > tz_max: tz_max = tz
+                if tx < tx_min: tx_min = tx
+                if ty < ty_min: ty_min = ty
+                if tz < tz_min: tz_min = tz
+            # scale bound
+            for sx, sy, sz in track.scale_curve.values():
+                if sx > sx_max: sx_max = sx
+                if sy > sy_max: sy_max = sy
+                if sz > sz_max: sz_max = sz
+                if sx < sx_min: sx_min = sx
+                if sy < sy_min: sy_min = sy
+                if sz < sz_min: sz_min = sz
+        all_keyframes = sorted(all_keyframes)
+        keyframe_max = max(all_keyframes)
+        fps = animation.fps
+        # factors
+        keytime_max = keyframe_max / fps
+        keytime_factor = 1 / f if (f:=keytime_max * fps / 65535.0) > 0 else 0
+        tx_factor = 1 / f if (f:=(tx_max - tx_min) / 65535.0) > 0 else 0
+        ty_factor = 1 / f if (f:=(ty_max - ty_min) / 65535.0) > 0 else 0
+        tz_factor = 1 / f if (f:=(tz_max - tz_min) / 65535.0) > 0 else 0
+        sx_factor = 1 / f if (f:=(sx_max - sx_min) / 65535.0) > 0 else 0
+        sy_factor = 1 / f if (f:=(sy_max - sy_min) / 65535.0) > 0 else 0
+        sz_factor = 1 / f if (f:=(sz_max - sz_min) / 65535.0) > 0 else 0
+        # packed times
+        packed_times = {
+            keyframe: pack('<H', round(keyframe * keytime_factor))
+            for keyframe in all_keyframes
+        }
+        # write
+        with stream as bs:
+            # pad and write later
+            bs.write(pack('140s', b''))
+            # joint hashes
+            joint_hashes_offset = bs.tell()
+            bs.write(pack(f'<{track_count}I', *tracks))
+            # compressed buffers
+            compressed_buffers_offset = bs.tell()
+            compressed_buffer_count = 0
+            for keyframe in all_keyframes:
+                packed_time = packed_times[keyframe]
+                for joint_index, joint_hash in enumerate(tracks):
+                    track = tracks[joint_hash]
+                    rotate_keyframes, translate_keyframes, scale_keyframes = joint_keyframes[joint_index]
+                    if keyframe in rotate_keyframes:
+                        bs.write(pack(
+                            '<2s2s6s',
+                            packed_time,
+                            packed_bits[joint_index][0],
+                            quaternion_compress(track.rotate_curve[keyframe])
+                        ))
+                        compressed_buffer_count += 1
+                    if keyframe in translate_keyframes:
+                        tx, ty, tz = track.translate_curve[keyframe]
+                        bs.write(pack(
+                            '<2s2sHHH',
+                            packed_time,
+                            packed_bits[joint_index][1],
+                            round((tx - tx_min) * tx_factor),
+                            round((ty - ty_min) * ty_factor),
+                            round((tz - tz_min) * tz_factor)
+                        ))
+                        compressed_buffer_count += 1
+                    if keyframe in scale_keyframes:
+                        sx, sy, sz = track.scale_curve[keyframe]
+                        bs.write(pack(
+                            '<2s2sHHH',
+                            packed_time,
+                            packed_bits[joint_index][2],
+                            round((sx - sx_min) * sx_factor),
+                            round((sy - sy_min) * sy_factor),
+                            round((sz - sz_min) * sz_factor)
+                        ))
+                        compressed_buffer_count += 1
+            # go back write stuffs
+            file_size = bs.tell()
+            bs.seek(0)
+            bs.write(pack(
+                '<8s7I20f3i',
+                b'r3d2canm', 0, # version
+                file_size, 0, 0, # format token, flags
+                track_count, compressed_buffer_count, 0, # jump cache count
+                keytime_max, fps,
+                0, 0, 0, 0, 0, 0, # error metrics
+                tx_min, ty_min, tz_min,
+                tx_max, ty_max, tz_max,
+                sx_min, sy_min, sz_min,
+                sx_max, sy_max, sz_max,
+                compressed_buffers_offset-12,
+                0, # jump caches offset
+                joint_hashes_offset-12
+            ))
+    else:
         # generate transform at all integer frames using interpolation then build vec bank, quat bank and buffers
         vec_bank = {}
         vec_id = 0
@@ -210,7 +329,7 @@ def write(animation, path=None):
         keyframe_count = round(animation.keyframe_count)
         track_count = len(animation.tracks)
         buffers = track_count * keyframe_count * [None]
-        for track_id, (join_hash, track) in enumerate(animation.tracks.items()):
+        for track_id, (joint_hash, track) in enumerate(animation.tracks.items()):
             t_keyframes = sorted(track.translate_curve.keys())
             r_keyframes = sorted(track.rotate_curve.keys())
             s_keyframes = sorted(track.scale_curve.keys())
@@ -270,59 +389,61 @@ def write(animation, path=None):
                 rid = quat_bank.setdefault(rotate, quat_id)
                 if rid == quat_id:
                     quat_id += 1
-
                 # build buffers 
                 buffers[keyframe * track_count + track_id] = pack('<3H', tid, sid, rid)
-
+        # check limit
         vec_count = len(vec_bank)
         if vec_count > 65535:
             raise Exception(f'pyRitoFile: Error: Write ANM: Animation size is too big, vector bank size: {vec_count} exceed 65535.')
         quat_count = len(quat_bank)
         if quat_count > 65535:
             raise Exception(f'pyRitoFile: Error: Write ANM: Animation size is too big, quaternion bank size: {quat_count} exceed 65535.')
-        # header and offsets
-        bs.write(
-            pack(
-                '<8s7If9i', 
-                b'r3d2anmd', 
-                5, # version
-                0, 0, 0, 0, # file_size, format_token, flags1, flags2
-                track_count,
-                keyframe_count,
-                1 / animation.fps, # frame_time
-                0, 0, 0, 0, 0, 0, # offsets
-                0, 0, 0, # pad 12 bytes
+        # write
+        with stream as bs:
+            # header and offsets
+            bs.write(
+                pack(
+                    '<8s7If9i', 
+                    b'r3d2anmd', 
+                    5, # version
+                    0, 0, 0, 0, # file_size, format_token, flags1, flags2
+                    track_count,
+                    keyframe_count,
+                    1 / animation.fps, # frame_time
+                    0, 0, 0, 0, 0, 0, # offsets
+                    0, 0, 0, # pad 12 bytes
+                )
             )
-        )
-        # write order: vecs -> quats -> joint_hashes -> buffers
-        # vecs
-        vecs_offset = bs.tell()
-        for vec in vec_bank:
-            bs.write(pack('<3f', *vec))
-        # quats
-        quats_offset = bs.tell()
-        for quat in quat_bank:
-            bs.write(pack('<6s', quaternion_compress(quat)))
-        # joint hashes
-        joint_hashes_offset = bs.tell()
-        bs.write(pack(f'<{track_count}I', *animation.tracks))
-        # buffers   
-        buffers_offset = bs.tell()
-        for buffer in buffers:
-            bs.write(buffer)
-        # offsets
-        bs.seek(40)
-        bs.write(pack(
-            '<6i',
-            joint_hashes_offset-12,
-            0,
-            0,
-            vecs_offset-12,
-            quats_offset-12,
-            buffers_offset-12,
-        ))
-        # file size
-        file_size = bs.tell()
-        bs.seek(12) 
-        bs.write(pack('<I', file_size))
-        return stream.getvalue() if path is None else None
+            # write order: vecs -> quats -> joint_hashes -> buffers
+            # vecs
+            vecs_offset = bs.tell()
+            for vec in vec_bank:
+                bs.write(pack('<3f', *vec))
+            # quats
+            quats_offset = bs.tell()
+            for quat in quat_bank:
+                bs.write(quaternion_compress(quat))
+            # joint hashes
+            joint_hashes_offset = bs.tell()
+            bs.write(pack(f'<{track_count}I', *animation.tracks))
+            # buffers   
+            buffers_offset = bs.tell()
+            for buffer in buffers:
+                bs.write(buffer)
+            # offsets
+            bs.seek(40)
+            bs.write(pack(
+                '<6i',
+                joint_hashes_offset-12,
+                0,
+                0,
+                vecs_offset-12,
+                quats_offset-12,
+                buffers_offset-12,
+            ))
+            # file size
+            file_size = bs.tell()
+            bs.seek(12) 
+            bs.write(pack('<I', file_size))
+    return stream.getvalue() if path is None else None
+

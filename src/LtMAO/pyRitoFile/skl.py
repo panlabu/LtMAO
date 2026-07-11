@@ -86,7 +86,7 @@ def read(path):
                 ]
                 # read joint name with joint name asset
                 for joint_id, joint in enumerate(joints):
-                    bs.seek(joints_offset + 100 * joint_id + joint.name)
+                    bs.seek(joints_offset + 100 * joint_id + 96 + joint.name)
                     joint.name = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
 
             # influences

@@ -87,10 +87,9 @@ def is_hex(s):
     except ValueError:
         return False
     
-def unhash(archive, hashtable):
-    get = hashtable.get
+def unhash(archive, lookup):
     for chunk in archive.chunks:
-        chunk._hash = get(chunk.hash, f'{chunk.hash:016x}')
+        chunk._hash = lookup(chunk.hash, f'{chunk.hash:016x}')
         if '.' in chunk._hash and chunk.extension is None:
             for ext in exts:
                 if chunk._hash.endswith(ext):

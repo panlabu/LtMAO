@@ -3,10 +3,14 @@ from maya.api import OpenMaya as om
 import traceback, random
 from ..... import lepath
 
+from cProfile import Profile
+
 def print_traceback(func):
     def wrapper(*args, **kwargs):
         try:
-            return func(*args, **kwargs)
+            #with Profile() as pr:
+            func(*args, **kwargs)
+            #    pr.print_stats('time')
         except:
             print(traceback.format_exc())
             raise

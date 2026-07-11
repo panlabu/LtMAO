@@ -39,11 +39,11 @@ class CLI:
     @staticmethod
     def wadunpack(src, dst):
         from LtMAO import lepath, wad_tool, hash_helper
-        if dst == None:
+        if dst is None:
             dst = lepath.ext(src, '.wad.client', '.wad')
-        hash_helper.Storage.read_wad_hashes()
-        wad_tool.unpack(src, dst, hash_helper.Storage.hashtables)
-        hash_helper.Storage.free_wad_hashes()
+        hash_helper.read_hashes(False, True)
+        wad_tool.unpack(src, dst, hash_helper.lookup)
+        hash_helper.free_hashes()
 
     @staticmethod
     def wadunpack_all(src, dst):

@@ -1,53 +1,42 @@
 from . import lepath, pyRitoFile
 import os, json
 
-
-
-def unpack(wad_file, raw_dir, hashtables, filter=None):
+def unpack(wad_file, raw_dir, lookup, filter=None):
     print(f'wad_tool: Start:  Unpack WAD: {wad_file}')
     # read wad
-    wad = pyRitoFile.wad.WAD().read(wad_file)
-    wad.un_hash(hashtables)
+    wad = pyRitoFile.wad.read(wad_file)
+    pyRitoFile.wad.unhash(wad, lookup)
+    # filter chunks
+    target_chunks = [chunk for chunk in wad.chunks if filter is None or chunk._hash in filter]
+    # create dirs
+    file_paths = {}
+    dirnames = set()
+    for chunk in target_chunks:
+        dirname, basename = lepath.split(lepath.join(raw_dir, chunk._hash))
+        file_paths[chunk.hash] = (dirname, basename)
+        os.makedirs(dirname, exist_ok=True)
+        dirnames.add(dirname)
+    # extract files
+    is_hex = pyRitoFile.wad.is_hex
+    read_data = pyRitoFile.wad.read_data
     hashed_files = {}
-    # create dirs first
-    with pyRitoFile.stream.BytesStream.reader(wad_file) as bs:
-        for chunk in wad.chunks:
-            file_path = lepath.join(raw_dir, chunk.hash)
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    # actual extract
-    with pyRitoFile.stream.BytesStream.reader(wad_file) as bs:
-        for chunk in wad.chunks:
-            if filter != None and chunk.hash not in filter:
-                continue
-            # read chunk data first to get extension
-            chunk.read_data(bs)
-            # output file path of this chunk
-            file_path = lepath.join(raw_dir, chunk.hash)
-            # add extension to hashed file if know
-            if pyRitoFile.wad.WADHasher.is_hash(chunk.hash) and chunk.extension != None:
-                ext = f'.{chunk.extension}'
-                if not file_path.endswith(ext):
-                    file_path += ext
-
-            should_be_hashed = False
-            # hash file with long basename
-            if len(os.path.basename(file_path)) > 255:
-                should_be_hashed = True
-            # hash file same name with dir
-            if os.path.exists(file_path) and os.path.isdir(file_path):
-                should_be_hashed = True
-            if should_be_hashed:
-                basename = pyRitoFile.wad.WADHasher.raw_to_hex(chunk.hash)
-                if chunk.extension != None:
-                    basename += f'.{chunk.extension}'
-                hashed_file =  lepath.join(raw_dir, basename)
-                hashed_files[basename] = chunk.hash
-                file_path = hashed_file
+    with open(wad_file, 'rb') as bs:
+        for chunk in target_chunks:
+            # read chunk data 
+            chunk_data = read_data(chunk, bs)
+            dirname, basename = file_paths[chunk.hash]
+            # try add extension to hashed file
+            if is_hex(chunk._hash) and chunk.extension is not None:
+                basename +=  f'.{chunk.extension}'
+            file_path = lepath.join(dirname, basename)
+            # long basename or match existed dirname
+            if len(basename) > 255 or file_path in dirnames:
+                basename = f'{chunk.hash:016x}.{chunk.extension}' if chunk.extension is not None else f'{chunk.hash:016x}'
+                file_path =  lepath.join(raw_dir, basename)
+                hashed_files[basename] = chunk._hash
             # write out chunk data to file
-            with open(file_path, 'wb') as fo:
-                fo.write(chunk.data)
-            chunk.free_data()
-            print(f'wad_tool: Finish: Unpack: {chunk.hash}')
+            with open(file_path, 'wb') as f:
+                f.write(chunk_data)
     # remove empty dirs
     for root, dirs, files in os.walk(raw_dir, topdown=False):
         if len(os.listdir(root)) == 0:
