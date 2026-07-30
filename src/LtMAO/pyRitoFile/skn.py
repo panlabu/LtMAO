@@ -1,6 +1,16 @@
 from io import BytesIO
 from struct import unpack, iter_unpack, pack
 
+attribute_names = {
+    0: 'Position',
+    1: 'Influence IDs',
+    2: 'Weights',
+    3: 'Normal',
+    4: 'Texcoord',
+    5: 'Color',
+    6: 'Tangent'
+}
+
 class Submesh:
     __slots__ = ('name', 'vertex_start', 'vertex_count', 'index_start', 'index_count')
 
@@ -12,29 +22,17 @@ class Submesh:
         self.index_count = index_count
 
 class Skin:
-    __slots__ = ('signature', 'version', 'flags', 'bounding_box', 'bounding_sphere', 'vertex_type', 'vertex_size', 'submeshes', 'indices', 'vertices')
+    __slots__ = ('signature', 'version', 'flags', 'bounding_box', 'bounding_sphere', 'submeshes', 'indices', 'vertices')
 
-    def __init__(self, signature, version, flags, bounding_box, bounding_sphere, vertex_type, vertex_size, submeshes, indices, vertices):
+    def __init__(self, signature, version, flags, bounding_box, bounding_sphere, submeshes, indices, vertices):
         self.signature = signature
         self.version = version
         self.flags = flags
         self.bounding_box = bounding_box
         self.bounding_sphere = bounding_sphere
-        self.vertex_type = vertex_type
-        self.vertex_size = vertex_size
         self.submeshes = submeshes
         self.indices = indices
         self.vertices = vertices
-
-element_names = {
-    0: 'Position',
-    1: 'Influences',
-    2: 'Weights',
-    3: 'Normal',
-    4: 'Texcoord',
-    5: 'Color',
-    6: 'Tangent'
-}
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
@@ -44,8 +42,8 @@ def read(path):
         bounding_box = None
         bounding_sphere = None
         vertex_type = 0
-        vertex_size = 52
         vertex_format = '<3f4B4f3f2f'
+        vertex_size = 52
 
         # header
         signature, major, minor = unpack('<4sHH', bs.read(8))
@@ -55,7 +53,6 @@ def read(path):
         if major not in {0, 2, 4} and minor != 1:
             raise Exception(
                 f'pyRitoFile: Error: Read SKN: Unsupported file version: {major}.{minor}')
-
         # rest of file
         if major == 0:
             index_count, vertex_count = unpack('<II', bs.read(8))
@@ -89,11 +86,13 @@ def read(path):
             index_count, vertex_count = unpack('<II', bs.read(8))
             # prepare vertex info
             if major == 4:
-                vertex_size, vertex_type = unpack('<II', bs.read(8))
+                _, vertex_type = unpack('<II', bs.read(8))
                 if vertex_type > 0:
                     vertex_format += '4B'
+                    vertex_size += 4
                 if vertex_type > 1:
                     vertex_format += '4f'
+                    vertex_size += 16
                 if vertex_type > 2:
                     raise Exception(f'pyRitoFile: Error: Read SKN: Unknown vertex_type: {vertex_type}')
                 
@@ -119,24 +118,25 @@ def read(path):
             face_count = submesh.index_count // 3
             submesh_indices = [
                 index
-
                 for a, b, c in faces[face_start:face_start+face_count]
                 if a != b and b != c and c != a
-                for index in [a, b, c]
+                for index in (a, b, c)
             ]
             submesh.index_start = len(indices)
             submesh.index_count = len(submesh_indices)
             indices.extend(submesh_indices)
 
-        # vertices = { element_name: element_values }
+        # vertices 
         ud = [*iter_unpack(vertex_format, bs.read(vertex_size*vertex_count))]
-        vertices = {
-            0: [vd[0:3] for vd in ud],   
-            1: [vd[3:7] for vd in ud],   
-            2: [vd[7:11] for vd in ud],  
-            3: [vd[11:14] for vd in ud], 
-            4: [vd[14:16] for vd in ud],
-        }
+        vertices = [
+            [vd[0:3] for vd in ud], # positions
+            [vd[3:7] for vd in ud], # influence_ids
+            [vd[7:11] for vd in ud], # weights
+            [vd[11:14] for vd in ud], # normals
+            [vd[14:16] for vd in ud], # uvs
+            [], # colors
+            [], # tangents
+        ]
         if vertex_type > 0:
             vertices[5] = [vd[16:20] for vd in ud] 
             if vertex_type > 1:
@@ -148,8 +148,6 @@ def read(path):
         flags, 
         bounding_box,
         bounding_sphere,
-        vertex_type,
-        vertex_size,
         submeshes,
         indices,
         vertices
@@ -178,14 +176,25 @@ def write(skin, path=None):
             bs.write(pack('<I', skin.flags))
         # count
         index_count = len(skin.indices)
-        vertex_count = len(next(iter(skin.vertices.values())))
+        vertex_count = len(skin.vertices[0])
         bs.write(pack('<II', index_count, vertex_count))
         # vertex info
+        vertex_type = 0
+        vertex_format = '3f4B4f3f2f'
+        vertex_size = 52
         if major >= 4:
+            if skin.vertices[5]:
+                vertex_type = 1
+                vertex_format += '4B'
+                vertex_size += 4
+                if skin.vertices[6]:
+                    vertex_type = 2
+                    vertex_format += '4f'
+                    vertex_size += 16
             bs.write(pack(
                 '<2I10f',
-                skin.vertex_size,
-                skin.vertex_type,
+                vertex_size,
+                vertex_type,
                 *skin.bounding_box[0],
                 *skin.bounding_box[1],
                 *skin.bounding_sphere[0],
@@ -194,27 +203,13 @@ def write(skin, path=None):
         # indices 
         bs.write(pack(f'<{index_count}H', *skin.indices))
         # vertices
-        vertices_values = [
-            skin.vertices[0], 
-            skin.vertices[1],
-            skin.vertices[2],
-            skin.vertices[3],
-            skin.vertices[4]
-        ]
-        vertex_format = '3f4B4f3f2f'
-        if skin.vertex_type > 0:
-            vertices_values.append(skin.vertices[5])
-            vertex_format += '4B'
-            if skin.vertex_type > 1:
-                vertices_values.append(skin.vertices[6])
-                vertex_format += '4f'
         bs.write(pack(
             f'<{vertex_format*vertex_count}',
             *[
-                value
-                for element_values in zip(*vertices_values)
-                for element_value in element_values
-                for value in element_value
+                component
+                for vertex in zip(*skin.vertices[0:5+vertex_type])
+                for attribute in vertex
+                for component in attribute
             ]
         ))
 

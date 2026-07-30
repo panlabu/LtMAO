@@ -1,7 +1,6 @@
 from maya import cmds
 from maya.api import OpenMaya as om
-import traceback, random
-from ..... import lepath
+import traceback, random, os.path
 
 from cProfile import Profile
 
@@ -16,47 +15,22 @@ def print_traceback(func):
             raise
     return wrapper
 
+def ensure_ext(path, ext):
+    if not path.endswith(ext):
+        path += ext
+    return path
 
 def get_option_key_name(key):
     return 'lemon3d_'+key
 
 def extract_name(path):
-    name = lepath.split(path)[1].split('.')[0]
+    name = os.path.split(path)[1].split('.')[0]
     if name[0].isdigit(): 
         name = 'l_' + name
     return name
 
 """
 def mirrorX(skn=None, skl=None, anm=None, so=None, mapgeo=None):
-    if skn != None:
-        for vertex in skn.vertices:
-            vertex.position.x = -vertex.position.x
-            if vertex.normal != None:
-                vertex.normal.y = -vertex.normal.y
-                vertex.normal.z = -vertex.normal.z
-    if skl != None:
-        for joint in skl.joints:
-            joint.local_translate.x = -joint.local_translate.x
-            joint.local_rotate.y = -joint.local_rotate.y
-            joint.local_rotate.z = -joint.local_rotate.z
-            joint.ibind_translate.x = -joint.ibind_translate.x
-            joint.ibind_rotate.y = -joint.ibind_rotate.y
-            joint.ibind_rotate.z = -joint.ibind_rotate.z
-    if anm != None:
-        for track in anm.tracks:
-            for time in track.poses:
-                pose = track.poses[time]
-                if pose.translate != None:
-                    pose.translate.x = -pose.translate.x
-                if pose.rotate != None:
-                    pose.rotate.y = -pose.rotate.y
-                    pose.rotate.z = -pose.rotate.z
-    if so != None:
-        for position in so.positions:
-            position.x = -position.x
-        so.central.x = -so.central.x
-        if so.pivot != None:
-            so.pivot.x = -so.pivot.x
     if mapgeo != None:
         for model in mapgeo.models:
             # flip matrix 

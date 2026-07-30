@@ -1,7 +1,8 @@
 from maya import OpenMayaMPx as omMPx, cmds
 from maya.api import OpenMaya as om, OpenMayaAnim as omAnim
-from ..... import lepath, pyRitoFile
+from ..... import pyRitoFile
 from . import helper
+import os.path
 
 class anmImporter(omMPx.MPxFileTranslator):
     name = 'League of Legends: ANM'
@@ -70,120 +71,111 @@ class anmExporter(omMPx.MPxFileTranslator):
 @helper.print_traceback
 def read_anm(anm_path, options):
     load_anm(
-        pyRitoFile.anm.read(lepath.ensure_ext(anm_path, '.anm')),
+        pyRitoFile.anm.read(helper.ensure_ext(anm_path, '.anm')),
         { 'reset_channel': 'reset_channel=0' not in options }
     )
 
 def load_anm(anm, load_options):
-    # ensure scene fps
-    om.MTime.setUIUnit(om.MTime.kNTSCField if anm.fps > 59 else om.MTime.kNTSCFrame)
-    ui_fps = om.MTime.uiUnit()
-    # reset channel
-    time0 = om.MTime(0.0, ui_fps)
-    if load_options['reset_channel']:
-        cmds.delete(all=True, channels=True)
-        omAnim.MAnimControl.setCurrentTime(time0)
-        offset = 0.0
-    else:
-        offset = omAnim.MAnimControl.currentTime().value
-    timen = om.MTime(offset+anm.keyframe_count, ui_fps)
-    # ensure animation range
-    omAnim.MAnimControl.setMinMaxTime(time0, timen)
-    omAnim.MAnimControl.setAnimationStartEndTime(time0, timen)
-    omAnim.MAnimControl.setPlaybackSpeed(1.0)
-
-    # find scene ik joints
+    # find scene curves
     hash_elf = pyRitoFile.maths.hash_elf
-    track_hashes = set(anm.tracks.keys())
-    ik_joints = {}
+    createAnimCurve = omAnim.MAnimUtil.createAnimCurve
+    joint_hashes = set(anm.joint_hashes)
+    curves = {}
+    joint_names = []
+    dg_modifier = om.MDGModifier()
     iterator = om.MItDag(om.MItDag.kDepthFirst, om.MFn.kJoint)
     while not iterator.isDone():
         ik_joint = omAnim.MFnIkJoint(iterator.getPath())
         joint_name = ik_joint.name()
         joint_hash = hash_elf(joint_name)
-        if joint_hash in track_hashes:
-            ik_joints[joint_hash] = (joint_name, ik_joint)
+        if joint_hash in joint_hashes:
+            curves[joint_hash] = (
+                createAnimCurve(ik_joint.findPlug('tx', False)),
+                createAnimCurve(ik_joint.findPlug('ty', False)),
+                createAnimCurve(ik_joint.findPlug('tz', False)),
+                createAnimCurve(ik_joint.findPlug('rx', False)),
+                createAnimCurve(ik_joint.findPlug('ry', False)),
+                createAnimCurve(ik_joint.findPlug('rz', False)),
+                createAnimCurve(ik_joint.findPlug('sx', False)),
+                createAnimCurve(ik_joint.findPlug('sy', False)),
+                createAnimCurve(ik_joint.findPlug('sz', False))
+            )
+            joint_names.append(joint_name)
         iterator.next()
-    if len(ik_joints) == 0:
+    if len(joint_names) == 0:
         raise helper.FunnyError('ANM Importer: No matched joints found in scene, please import SKL first before import ANM.')
+    dg_modifier.doIt()
 
-    # bind current pose to keyframe 0 - very helpful if its bind pose
-    # this also create all curves, dont need MFnAnimCurve.create()
-    joint_names = [joint_name for joint_name, _ in ik_joints.values()]
-    omAnim.MAnimControl.setCurrentTime(time0)
-    cmds.setKeyframe(
-        joint_names,
-        breakdown=False,
-        hierarchy='none',
-        controlPoints=False,
-        shape=False,
-        attribute=('tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz')
-    )
+    # fps
+    om.MTime.setUIUnit(om.MTime.kNTSCField if anm.fps > 59.0 else om.MTime.kNTSCFrame)
+    ui_fps = om.MTime.uiUnit()
 
-    # all keyframe + 1 because keyframe 0 is bind as above
-    offset += 1
-    # get all rotation curves and change interpolation to none
+    # times and timeline
+    if load_options['reset_channel']:
+        cmds.delete(joint_names, channels=True)
+        offset = 0.0
+    else:
+        offset = omAnim.MAnimControl.animationEndTime().value + 1.0
+    times = {keyframe: om.MTime(offset + keyframe, ui_fps) for keyframe in anm.keyframes}
+    time_start = om.MTime(0.0, ui_fps)
+    time_end = times[anm.keyframes[-1]]
+    omAnim.MAnimControl.setMinMaxTime(time_start, time_end)
+    omAnim.MAnimControl.setAnimationStartEndTime(time_start, time_end)
+    omAnim.MAnimControl.setPlaybackSpeed(1.0)
+
+    # rotation curves interpolation to none
     rcurve_names = [
         name
         for joint_name in joint_names
         for name in (f'{joint_name}.rx', f'{joint_name}.ry', f'{joint_name}.rz')
     ]
     cmds.rotationInterpolation(rcurve_names, convert='none')
-    # add keys to curve
-    times = {}
-    for joint_hash, (_, ik_joint) in ik_joints.items():
-        track = anm.tracks[joint_hash]
+
+    # add keys to curves
+    translate_curves = anm.translate_curves
+    rotate_curves = anm.rotate_curves
+    scale_curves = anm.scale_curves
+    for joint_hash, (tx, ty, tz, rx, ry, rz, sx, sy, sz) in curves.items():
         # translate
-        translate_curve = track.translate_curve
+        translate_curve = translate_curves[joint_hash]
         if translate_curve:
-            ttimes = [
-                times[time] if time in times else times.setdefault(time, om.MTime(offset+time, ui_fps)) 
-                for time in translate_curve.keys()
-            ]
+            ttimes = [times[time] for time in translate_curve]
             txs, tys, tzs = zip(*translate_curve.values())
             txs = [-x for x in txs]
-            omAnim.MFnAnimCurve(ik_joint.findPlug('tx', False)).addKeys(ttimes, txs)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('ty', False)).addKeys(ttimes, tys)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('tz', False)).addKeys(ttimes, tzs)
+            omAnim.MFnAnimCurve(tx).addKeys(ttimes, txs)
+            omAnim.MFnAnimCurve(ty).addKeys(ttimes, tys)
+            omAnim.MFnAnimCurve(tz).addKeys(ttimes, tzs)
         # rotate
-        rotate_curve = track.rotate_curve
+        rotate_curve = rotate_curves[joint_hash]
         if rotate_curve:
-            rtimes = [
-                times[time] if time in times else times.setdefault(time, om.MTime(offset+time, ui_fps))
-                for time in rotate_curve.keys()
-            ]
+            rtimes = [times[time] for time in rotate_curve]
             eulers = [
                 (ex, ey, ez)
                 for qx, qy, qz, qw in rotate_curve.values() 
                 for ex, ey, ez in [om.MQuaternion(qx, -qy, -qz, qw).asEulerRotation()]
             ]
             exs, eys, ezs = zip(*eulers)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('rx', False)).addKeys(rtimes, exs)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('ry', False)).addKeys(rtimes, eys)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('rz', False)).addKeys(rtimes, ezs)
+            omAnim.MFnAnimCurve(rx).addKeys(rtimes, exs)
+            omAnim.MFnAnimCurve(ry).addKeys(rtimes, eys)
+            omAnim.MFnAnimCurve(rz).addKeys(rtimes, ezs)
         # scale
-        scale_curve = track.scale_curve
+        scale_curve = scale_curves[joint_hash]
         if scale_curve:
-            stimes = [
-                times[time] if time in times else times.setdefault(time, om.MTime(offset+time, ui_fps))
-                for time in scale_curve.keys()
-            ]
+            stimes = [times[time] for time in scale_curve]
             sxs, sys, szs = zip(*scale_curve.values())
-            omAnim.MFnAnimCurve(ik_joint.findPlug('sx', False)).addKeys(stimes, sxs)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('sy', False)).addKeys(stimes, sys)
-            omAnim.MFnAnimCurve(ik_joint.findPlug('sz', False)).addKeys(stimes, szs)
-    # change all rotation curves interpolation to quaternion 
+            omAnim.MFnAnimCurve(sx).addKeys(stimes, sxs)
+            omAnim.MFnAnimCurve(sy).addKeys(stimes, sys)
+            omAnim.MFnAnimCurve(sz).addKeys(stimes, szs)
+
+    # rotation curves interpolation to quaternion 
     cmds.rotationInterpolation(rcurve_names, convert='quaternionSlerp')
-    # go to last time
-    omAnim.MAnimControl.setCurrentTime(timen)
 
 def dump_anm():
     # fps
     ui_fps = om.MTime.uiUnit() 
-    fps = 60.0 if om.MTime(1.0, om.MTime.kSeconds).asUnits(ui_fps) > 59 else 30.0
+    fps = 60.0 if om.MTime(1.0, om.MTime.kSeconds).asUnits(ui_fps) > 59.0 else 30.0
 
-    # ik joints
-    Track = pyRitoFile.anm.Track
+    # joint hashes
     hash_elf = pyRitoFile.maths.hash_elf
     ik_joints = {}
     iterator = om.MItDag(om.MItDag.kDepthFirst, om.MFn.kJoint)
@@ -191,58 +183,48 @@ def dump_anm():
         ik_joint = omAnim.MFnIkJoint(iterator.getPath())
         joint_name = ik_joint.name()
         joint_hash = hash_elf(joint_name)
-        ik_joints[joint_hash] = (joint_name, ik_joint)
+        ik_joints[joint_hash] = ik_joint
         iterator.next()
+    joint_hashes = [*ik_joints]
 
-    # init tracks and get all times
-    tracks = {}
-    all_times = set()
-    joint_times = {}
-    for joint_hash, (joint_name, ik_joint) in ik_joints.items():
-        # track
-        tracks[joint_hash] = Track({}, {}, {})
-        # time
-        translate_times = set(cmds.keyframe(f'{joint_name}.tx', query=True, timeChange=True) or []) | set(cmds.keyframe(f'{joint_name}.ty', query=True, timeChange=True) or []) | set(cmds.keyframe(f'{joint_name}.tz', query=True, timeChange=True) or [])
-        rotate_times = set(cmds.keyframe(f'{joint_name}.rx', query=True, timeChange=True) or []) | set(cmds.keyframe(f'{joint_name}.ry', query=True, timeChange=True) or []) | set(cmds.keyframe(f'{joint_name}.rz', query=True, timeChange=True) or [])
-        scale_times = set(cmds.keyframe(f'{joint_name}.sx', query=True, timeChange=True) or []) | set(cmds.keyframe(f'{joint_name}.sy', query=True, timeChange=True) or []) | set(cmds.keyframe(f'{joint_name}.sz', query=True, timeChange=True) or [])
-        translate_times = {t - 1 for t in translate_times if t >= 1}
-        rotate_times = {t - 1 for t in rotate_times if t >= 1}
-        scale_times = {t - 1 for t in scale_times if t >= 1}
-        if not translate_times: translate_times.add(0)
-        if not rotate_times: rotate_times.add(0)
-        if not scale_times: scale_times.add(0)
-        joint_times[joint_hash] = (translate_times, rotate_times, scale_times)
-        all_times.update(translate_times, rotate_times, scale_times)
-    all_times = list(sorted(all_times))
+    # keyframes 
+    start = round(omAnim.MAnimControl.animationStartTime().value)
+    end = round(omAnim.MAnimControl.animationEndTime().value)
+    keyframe_count = end - start + 1
+    keyframes = tuple(range(keyframe_count))
 
     # curves
-    original_time = omAnim.MAnimControl.currentTime()
     space = om.MSpace.kTransform
-    for time in all_times:
-        omAnim.MAnimControl.setCurrentTime(om.MTime(time+1, ui_fps))
-        for joint_hash, (joint_name, ik_joint) in ik_joints.items():
-            track = tracks[joint_hash]
-            translate_times, rotate_times, scale_times = joint_times[joint_hash]
-            if time in translate_times:
-                x, y, z = ik_joint.translation(space)
-                track.translate_curve[time] = (-x, y, z)
-            if time in rotate_times:
-                x, y, z, w = ik_joint.rotation(asQuaternion=True)
-                track.rotate_curve[time] = (x, -y, -z, w)
-            if time in scale_times:
-                track.scale_curve[time] = ik_joint.scale()
-    omAnim.MAnimControl.setCurrentTime(original_time)
-
+    translate_curves = {}
+    rotate_curves = {}
+    scale_curves = {}
+    for joint_hash in joint_hashes:
+        translate_curves[joint_hash] = {}
+        rotate_curves[joint_hash] = {}
+        scale_curves[joint_hash] = {}
+    time_return = omAnim.MAnimControl.currentTime()
+    for keyframe in keyframes:
+        omAnim.MAnimControl.setCurrentTime(om.MTime(start+keyframe, ui_fps))
+        for joint_hash, ik_joint in ik_joints.items():
+            # translate
+            tx, ty, tz = ik_joint.translation(space)
+            translate_curves[joint_hash][keyframe] = (-tx, ty, tz)
+            # rotate
+            qx, qy, qz, qw = ik_joint.rotation(asQuaternion=True)
+            rotate_curves[joint_hash][keyframe] = (qx, -qy, -qz, qw)
+            # scale
+            scale_curves[joint_hash][keyframe] = ik_joint.scale()
+    omAnim.MAnimControl.setCurrentTime(time_return)
 
     return pyRitoFile.anm.Animation(
         None, None, None, None,
-        None, None, None, fps, 
-        None, tracks
+        fps, keyframes, joint_hashes,
+        translate_curves, rotate_curves, scale_curves
     )
 
 @helper.print_traceback
 def write_anm(anm_path):
     pyRitoFile.anm.write(
         dump_anm(),
-        lepath.ensure_ext(anm_path)
+        helper.ensure_ext(anm_path, '.anm')
     )

@@ -25,18 +25,11 @@ class Joint:
         self.transform = transform
 
 class Skeleton:
-    __slots__ = (
-        'file_size', 'signature', 'version', 'flags', 'name', 
-        'asset', 'joints', 'influences'
-    )
+    __slots__ = ('signature', 'version', 'joints', 'influences')
 
-    def __init__(self, file_size, signature, version, flags, name, asset, joints, influences):
-        self.file_size = file_size
+    def __init__(self, signature, version, joints, influences):
         self.signature = signature
         self.version = version
-        self.flags = flags
-        self.name = name
-        self.asset = asset
         self.joints = joints
         self.influences = influences
 
@@ -44,12 +37,6 @@ class Skeleton:
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
     with stream as bs:
-        # init 
-        file_size = None
-        flags = None
-        name = None
-        asset = None
-
         # read signature first to check legacy or not
         bs.seek(4)
         signature = bs.read(4)
@@ -59,11 +46,11 @@ def read(path):
         if signature == b'\xc3O\xfd"':
             # new skl 
             # header
-            file_size, signature, version = unpack('<I4sI', bs.read(12))
+            signature, version = unpack('<4x4sI', bs.read(12))
             if version != 0:
-                raise Exception(f'pyRitoFile: Error: Read SKL {path}: Unsupported file version: {version}')
-            # flags, counts and offsets
-            flags, joint_count, influence_count, joints_offset, influences_offset, name_offset, asset_offset = unpack('<HHIi4xiii24x', bs.read(52))
+                raise Exception(f'pyRitoFile: Error: Read SKL: Unsupported file version: {version}')
+            # counts and offsets
+            joint_count, influence_count, joints_offset, influences_offset = unpack('<2xHIi4xi32x', bs.read(52))
             # read joints
             if joints_offset > 0 and joint_count > 0:
                 bs.seek(joints_offset)
@@ -84,7 +71,7 @@ def read(path):
                     )
                     for ud in iter_unpack('<H2xh2xI21fi', bs.read(100*joint_count))
                 ]
-                # read joint name with joint name asset
+                # read joint name with joint name offset
                 for joint_id, joint in enumerate(joints):
                     bs.seek(joints_offset + 100 * joint_id + 96 + joint.name)
                     joint.name = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
@@ -92,25 +79,18 @@ def read(path):
             # influences
             if influences_offset > 0 and influence_count > 0:
                 bs.seek(influences_offset)
-                influences = unpack(f'<{influence_count}h', bs.read(influence_count*2))
-            # name and asset 
-            if name_offset > 0:
-                bs.seek(name_offset)
-                name = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
-            if asset_offset > 0:
-                bs.seek(asset_offset)
-                asset = b''.join(iter(partial(bs.read, 1), b'\x00')).decode()
+                influences = unpack(f'<{influence_count}H', bs.read(influence_count*2))
         else:
             # old skl 
             # header
             signature = bs.read(8)
             if signature != b'r3d2sklt':
-                raise Exception(f'pyRitoFile: Error: Read SKL {path}: Wrong file signature: {signature}')
+                raise Exception(f'pyRitoFile: Error: Read SKL: Wrong file signature: {signature}')
             version = int.from_bytes(bs.read(4), 'little')
             if version not in {1, 2}:
-                raise Exception(f'pyRitoFile: Error: Read SKL {path}: Unsupported file version: {version}')
+                raise Exception(f'pyRitoFile: Error: Read SKL: Unsupported file version: {version}')
             # joints
-            skeleton_id, joint_count = unpack('<II', bs.read(8))
+            joint_count, = unpack('<4xI', bs.read(8))
             joints = [
                 Joint(
                     n:=ud[0].rstrip(b'\x00').decode(),
@@ -125,22 +105,10 @@ def read(path):
                     None,
                     None,
                     (
-                        ud[3],
-                        ud[7],
-                        ud[11],
-                        0.0,
-                        ud[4],
-                        ud[8],
-                        ud[12],
-                        0.0,
-                        ud[5],
-                        ud[9],
-                        ud[13],
-                        0.0,
-                        ud[6],
-                        ud[10],
-                        ud[14],
-                        1.0
+                        ud[3], ud[7], ud[11], 0.0,
+                        ud[4], ud[8], ud[12], 0.0,
+                        ud[5], ud[9], ud[13], 0.0,
+                        ud[6], ud[10], ud[14], 1.0
                     )
                 )
                 for ud in iter_unpack('<32si13f', bs.read(88*joint_count))
@@ -162,12 +130,8 @@ def read(path):
                 influences = unpack(f'<{influence_count}I', bs.read(influence_count*4))
 
         return Skeleton(
-            file_size, 
             signature,
             version,
-            flags,
-            name,
-            asset,
             joints,
             influences
         )
@@ -176,34 +140,14 @@ def read(path):
 def write(skeleton, path=None):
     stream = BytesIO() if path is None else open(path, 'wb')
     with stream as bs:
-        # header
-        bs.write(pack('<I4sI', 0, b'\xc3O\xfd"', 0))
+        # pad
+        bs.write(pack('<64s', b''))
 
-        # flags, counts and offsets
-        joint_count = len(skeleton.joints)
-        joints_offset = 64
-        joint_indices_offset = joints_offset + joint_count * 100
-        influences_offset = joint_indices_offset + joint_count * 8
-        joint_names_offset = influences_offset + joint_count * 2
-        bs.write(pack(
-            '<HHI6i5I', 
-            0, joint_count, joint_count,  # flags, joint and influence count
-            joints_offset, joint_indices_offset, influences_offset, 0, 0, joint_names_offset, # offsets
-            0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF # pad 20 bytes
-        ))
-
-        # joint names
-        joint_name_offsets = [None] * joint_count
-        bs.seek(joint_names_offset)
-        for joint_id, joint in enumerate(skeleton.joints):
-            joint_name_offsets[joint_id] = bs.tell()
-            bs.write(joint.name.encode() + b'\x00') # null terminated
-        
         # joint
-        bs.seek(joints_offset)
+        joints_offset = bs.tell()
         for joint_id, joint in enumerate(skeleton.joints):
             bs.write(pack(
-                '<HhhhI21fi', 
+                '<H3hI21fi', 
                 0, # flags
                 joint_id, 
                 joint.parent, 
@@ -211,26 +155,44 @@ def write(skeleton, path=None):
                 joint.hash,
                 joint.radius,
                 *joint.translate,
-                *joint.rotate,
                 *joint.scale,
+                *joint.rotate,
                 *joint.inversed_bind_translate,
-                *joint.inversed_bind_rotate,
                 *joint.inversed_bind_scale,
-                joint_name_offsets[joint_id] - bs.tell()
+                *joint.inversed_bind_rotate,
+                0 # name offset write later
             ))
 
+        # joint hashes
+        joint_hashes_offset = bs.tell()
+        for joint_id, joint in sorted(enumerate(skeleton.joints), key=lambda x: x[1].hash):
+            bs.write(pack('<2HI', joint_id, 0, joint.hash))
+
         # influences
-        bs.seek(influences_offset)
-        bs.write(pack(f'<{joint_count}H', *range(joint_count)))
+        influences_offset = bs.tell()
+        influence_count = len(skeleton.influences)
+        bs.write(pack(f'<{influence_count}H', *skeleton.influences))
 
-        # joint indices
-        bs.seek(joint_indices_offset)
+        # joint names
+        joint_names_offset = bs.tell()
         for joint_id, joint in enumerate(skeleton.joints):
-            bs.write(pack('<HHI', joint_id, 0, joint.hash))
+            name_offset = bs.tell()
+            field_offset = joints_offset + (joint_id * 100) + 96   
+            bs.seek(field_offset)
+            bs.write(pack('<i', name_offset-field_offset))
+            bs.seek(name_offset)
+            bs.write(joint.name.encode() + b'\x00') # null terminated
 
-        # file size
+        # go back write header
         file_size = bs.tell()
         bs.seek(0)
-        bs.write(pack('<I', file_size))
+        bs.write(pack(
+            '<I4sI2HI6i',
+            file_size, b'\xc3O\xfd"', 
+            0, 0, # verison, flags
+            len(skeleton.joints), influence_count,
+            joints_offset, joint_hashes_offset, influences_offset,
+            0, 0, joint_names_offset # name, asset offset
+        ))
 
         return stream.getvalue() if path is None else None

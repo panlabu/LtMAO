@@ -79,14 +79,6 @@ def guess_extension(header):
             return ext
     return None
 
-def is_hex(s):
-    if len(s) != 16: return False
-    try: 
-        int(s, 16)
-        return True
-    except ValueError:
-        return False
-    
 def unhash(archive, lookup):
     for chunk in archive.chunks:
         chunk._hash = lookup(chunk.hash, f'{chunk.hash:016x}')

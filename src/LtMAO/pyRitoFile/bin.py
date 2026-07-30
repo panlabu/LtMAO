@@ -40,15 +40,6 @@ legacy_types = [i+1 if i > 128 else i for i in modern_types]
 # ancient: did not have file, complex is start at 18
 ancient_types = [(128 if i == 18 else i + 111) if i > 17 else i for i in modern_types]
 
-
-def is_hex(s):
-    if len(s) != 8: return False
-    try: 
-        int(s, 16)
-        return True
-    except:
-        return False
-
 def flatten(binary):
     # init
     flat_fields = []
@@ -526,4 +517,99 @@ def write(binary, path=None):
                     lp
                 ) + path_buffer + buffer)
         return stream.getvalue() if path is None else None
+
+# pyrf
+indents = ['    ' * i for i in range(0, 32)]
+equals= ['', ' = ']
+def dump(binary, pyrf_file):
+    string_type = 16
+    list_types = {128, 129}
+    embed_types = {130, 131}
+    option_type = 133
+    map_type = 134
+    def dump_data(data_type, data, indent, inline, equal):
+        # complex first
+        if data_type in list_types:
+            value_type, values = data
+            res = [f'[{btype_names[value_type]}] = [' if equal else '[']
+            if values:
+                res.append('\n')
+                res.extend([
+                    f'{indents[indent+1]}{dump_data(value_type, value, indent+1, True, False)}\n'
+                    for value in values
+                ])
+                res.append(f'{indents[indent]}]')
+            else:
+                res.append(']')
+            return ''.join(res)
+        elif data_type in embed_types:
+            (class_hash, _class_hash), fields = data
+            res = [f' = {_class_hash}(' if equal else f'{_class_hash}(']
+            if fields:
+                res.append('\n')
+                res.extend([
+                    f'{indents[indent+1]}{field._hash}: {btype_names[field.data_type]}{dump_data(field.data_type, field.data, indent+1, True, True)}\n'
+                    for field in fields
+                ])
+                res.append(f'{indents[indent]})')
+            else:
+                res.append(')')
+            return ''.join(res)
+        elif data_type == option_type:
+            value_type, value = data
+            res = f'{dump_data(value_type, value, indent, True, False)}'
+            if equal:
+                res += f'[{btype_names[value_type]}] = '
+            return res
+        elif data_type == map_type:
+            key_type, value_type, pairs = data
+            res = [f'[{btype_names[key_type]},{btype_names[value_type]}] = {{' if equal else '{']
+            if pairs:
+                res.append('\n')
+                res.extend([
+                    f'{dump_data(key_type, key, indent+1, False, False)}: {dump_data(value_type, value, indent+1, True, False)}\n'
+                    for key, value in pairs.items()
+                ])
+                res.append(f'{indents[indent]}}}')
+            else:
+                res.append('}')
+            return ''.join(res)
+        else:
+            # basic 
+            if data_type == string_type:                                            data = f'"{data}"'
+            return f'{indents[0 if inline else indent]}{equals[equal]}{data}'
+
+    with open(pyrf_file, 'w') as f:
+        # header
+        f.write(f'signature = {binary.signature}\n')
+        # links
+        res = ['links = [']
+        if binary.links:
+            res.append('\n')
+            res.extend([
+                f'{indents[1]}"{link}"\n'
+                for link in binary.links
+            ])
+        res.append(']\n')
+        f.write(''.join(res))
+        # entries
+        res = ['entries = {']
+        if binary.entries:
+            res.append('\n')
+            for entry in binary.entries:
+                res.append(f'{indents[1]}{entry._hash}: {entry._class_hash}(')
+                if entry.fields:
+                    res.append('\n')
+                    res.extend([
+                        f'{indents[2]}{field._hash}: {btype_names[field.data_type]}{dump_data(field.data_type, field.data, 2, True, True)}\n'
+                        for field in entry.fields
+                    ])
+                    res.append(f'{indents[1]})\n')
+                else:
+                    res.append(')')
+        res.append('}\n')
+        f.write(''.join(res))
+
+        # patches
+
 

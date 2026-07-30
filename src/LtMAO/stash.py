@@ -1,5 +1,4 @@
-import os, json, traceback
-from . import lepath
+import os, os.path, json, traceback
 
 s = {}
 pref_dir = './pref'
@@ -22,7 +21,7 @@ def save():
 
 def init():
     os.makedirs(pref_dir, exist_ok=True)
-    if not lepath.exists(stash_file):
+    if not os.path.exists(stash_file):
         with open(stash_file, 'w') as f:
             f.write('{}')
     load()

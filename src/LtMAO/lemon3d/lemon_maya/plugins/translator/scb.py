@@ -1,7 +1,8 @@
 from maya import OpenMayaMPx as omMPx, cmds
 from maya.api import OpenMaya as om, OpenMayaAnim as omAnim
-from ..... import lepath, pyRitoFile
+from ..... import pyRitoFile
 from . import helper
+import os.path
 
 class scoImporter(omMPx.MPxFileTranslator):
     name = 'League of Legends: SCO'
@@ -97,47 +98,18 @@ class scbExporter(omMPx.MPxFileTranslator):
 
     def writer(self, file, options, access):
         return True
-    """
-        def write_cmd(file, options, access):
-            # check selected
-            selections = MSelectionList()
-            MGlobal.getActiveSelectionList(selections)
-            iterator = MItSelectionList(selections, MFn.kMesh)
-            if iterator.isDone():
-                raise helper.FunnyError(
-                    f'SO Exporter: Please select a mesh to export.')
-            mesh_dagpath = MDagPath()
-            iterator.getDagPath(mesh_dagpath)
-            iterator.next()
-            if not iterator.isDone():
-                raise helper.FunnyError(
-                    f'SO Exporter: Please select only one mesh to export.')
-            selected_mesh = MFnMesh(mesh_dagpath)
-            # export options
-            scb_path = helper.ensure_path_extension(file.expandedFullName(), self.extension)
-            so = pyRitoFile.so.SO()
-            dump_options = {
-                'selected_mesh': selected_mesh,
-                'scb_flags': pyRitoFile.so.SOFlag.HasVcp if 'HasVcp' in options else pyRitoFile.so.SOFlag.HasLocalOriginLocatorAndPivot
-            }
-            SO.scene_dump(so, dump_options)
-            helper.mirrorX(so=so)
-            so.write_scb(scb_path)
-            return True
-
-        return helper.try_cmd(lambda: write_cmd(file, options, access))"""
 
 @helper.print_traceback
 def read_sco(scb_path):
     load_scb(
-        scb:=pyRitoFile.scb.read(scb_path:=lepath.ensure_ext(scb_path, '.sco')),
+        scb:=pyRitoFile.scb.read(scb_path:=helper.ensure_ext(scb_path, '.sco')),
         { 'scb_name': scb.name if scb.name else helper.extract_name(scb_path) }
     )
 
 @helper.print_traceback
 def read_scb(scb_path):
     load_scb(
-        scb:=pyRitoFile.scb.read(scb_path:=lepath.ensure_ext(scb_path, '.scb')),
+        scb:=pyRitoFile.scb.read(scb_path:=helper.ensure_ext(scb_path, '.scb')),
         { 'scb_name': scb.name if scb.name else helper.extract_name(scb_path) }
     )
 
@@ -171,7 +143,6 @@ def load_scb(scb, load_options):
     uv_indices = om.MIntArray(range(index_count))
     mesh.setUVs(us, vs)
     mesh.assignUVs(face_sizes, uv_indices)
-
 
     # materials
     dg_modifier = om.MDGModifier()
@@ -216,151 +187,89 @@ def load_scb(scb, load_options):
 
     #mesh.updateSurface()
 
-"""
-def dump_scb(scb, dump_options):
-    mesh = dump_options['selected_mesh']
-    mesh_dagpath = MDagPath()
-    mesh.getPath(mesh_dagpath)
 
-    # get name
-    so.name = mesh.name()
+def dump_scb(dump_options):
+    mesh_dagpath = dump_options['selected_mesh']
+    mesh = om.MFnMesh(mesh_dagpath)
 
-    # central point: translation of mesh
-    transform = MFnTransform(mesh.parent(0))
-    central_translation = transform.getTranslation(MSpace.kTransform)
-    so.central = pyRitoFile.structs.Vector(
-        central_translation.x, central_translation.y, central_translation.z)
+    # check holes
+    if len(mesh.getHoles()) > 0:
+        raise helper.FunnyError(f'SCB Exporter: {mesh.name()} has holes.')
 
-    # check hole
-    hole_info = MIntArray()
-    hole_vertex = MIntArray()
-    mesh.getHoles(hole_info, hole_vertex)
-    if hole_info.length() > 0:
-        raise helper.FunnyError(f'SO Expoter ({mesh.name()}): Mesh contains holes.')
+    # name and central
+    mesh_name = mesh.name()
+    mesh_transform = om.MFnTransform(mesh.parent(0))
+    cx, cy, cz = mesh_transform.translation(om.MSpace.kTransform)
+    central = (-cx, cy, cz)
 
-    # SCO only: find pivot joint through skin cluster
-    iterator = MItDependencyGraph(
-        mesh.object(), MFn.kSkinClusterFilter, MItDependencyGraph.kUpstream)
-    if not iterator.isDone():
-        skin_cluster = MFnSkinCluster(iterator.currentItem())
-        influences_dagpath = MDagPathArray()
-        influence_count = skin_cluster.influenceObjects(
-            influences_dagpath)
-        if influence_count > 1:
-            raise helper.FunnyError(
-                f'SO Expoter ({mesh.name()}): More than 1 joint bound with this mesh, can not determine which one is pivot joint.')
-        ik_joint = MFnTransform(influences_dagpath[0])
-        joint_translation = ik_joint.getTranslation(MSpace.kTransform)
-        so.pivot = pyRitoFile.structs.Vector(
-            so.central.x - joint_translation.x,
-            so.central.y - joint_translation.y,
-            so.central.z - joint_translation.z
-        )
-
-    # dumb vertices
-    vertex_count = mesh.numVertices()
-    points = MFloatPointArray()
-    mesh.getPoints(points, MSpace.kWorld)
-    so.positions = [pyRitoFile.structs.Vector(points[i].x, points[i].y, points[i].z)
-                        for i in range(vertex_count)]
-    so.indices = []
-    so.uvs = []
-    # dump uvs outside loop
-    u_values = MFloatArray()
-    v_values = MFloatArray()
-    mesh.getUVs(u_values, v_values)
-    # iterator on faces
-    # to dump face indices and UVs
-    # extra checking
-    bad_faces = MIntArray()  # invalid triangulation face
-    bad_faces2 = MIntArray()  # no UV face
-    iterator = MItMeshPolygon(mesh_dagpath)
-    iterator.reset()
-    while not iterator.isDone():
-        face_index = iterator.index()
-
-        # check valid triangulation
-        if not iterator.hasValidTriangulation():
-            if face_index not in bad_faces:
-                bad_faces.append(face_index)
-        # check if face has no UVs
-        if not iterator.hasUVs():
-            if face_index not in bad_faces2:
-                bad_faces2.append(face_index)
-
-        # get triangulated face indices
-        points = MPointArray()
-        indices = MIntArray()
-        iterator.getTriangles(points, indices)
-        face_index_count = indices.length()
-        # get face vertices
-        map_indices = {}
-        vertices = MIntArray()
-        iterator.getVertices(vertices)
-        face_vertex_count = vertices.length()
-        # map face indices by uv_index
-        for i in range(face_vertex_count):
-            util = MScriptUtil()
-            ptr = util.asIntPtr()
-            iterator.getUVIndex(i, ptr)
-            uv_index = util.getInt(ptr)
-            map_indices[vertices[i]] = uv_index
-        # dump indices and uvs
-        for i in range(face_index_count):
-            index = indices[i]
-            so.indices.append(index)
-            uv_index = map_indices[index]
-            so.uvs.append(pyRitoFile.structs.Vector(
-                u_values[uv_index],
-                1.0 - v_values[uv_index]
+    vertex_count = mesh.numVertices
+    # positions
+    positions = [(-x, y, z) for x, y, z, _ in mesh.getFloatPoints()]
+    # uv
+    us, vs = mesh.getUVs()
+    us = tuple(us)
+    vs = tuple(vs)
+    uv_count = len(us)
+    vertex_id_counts, vertex_ids = mesh.getVertices()
+    _, uv_ids = mesh.getAssignedUVs()
+    vertex_ids = tuple(vertex_ids)
+    uv_ids = tuple(uv_ids)
+    # init
+    uv_id_map = [None] * vertex_count
+    indices = []
+    uvs = []
+    add_idx = indices.append
+    add_uv = uvs.append
+    # triangle
+    triangle_counts, triangle_vertices = mesh.getTriangles()
+    triangle_vertices = tuple(triangle_vertices)
+    left_t = 0
+    left_v = 0
+    for vertex_id_count, triangle_count in zip(vertex_id_counts, triangle_counts):
+        right_v = left_v + vertex_id_count
+        right_t = left_t + triangle_count * 3
+        # local face vertex id to uv id map
+        for i in range(left_v, right_v):
+            uv_id_map[vertex_ids[i]] = uv_ids[i]
+        # dump triangle vertex ids
+        for vertex_id in triangle_vertices[left_t:right_t]:
+            uv_id = uv_id_map[vertex_id]
+            if uv_id is None or uv_id < 0 or uv_id >= uv_count:
+                raise helper.FunnyError(f'SKN Exporter: UV id is missing or out of bounds. Please check if all UVs of {mesh.name()} are in first UV set.')
+            add_idx(vertex_id)
+            add_uv((
+                us[uv_id],
+                1.0 - vs[uv_id]
             ))
-        iterator.next()
-    if bad_faces.length() > 0:
-        component = MFnSingleIndexedComponent()
-        face_component = component.create(
-            MFn.kMeshPolygonComponent)
-        component.addElements(bad_faces)
-        selections = MSelectionList()
-        selections.add(mesh_dagpath, face_component)
-        MGlobal.selectCommand(selections)
-        raise helper.FunnyError(
-            f'SO Expoter ({mesh.name()}): Mesh contains {bad_faces.length()} invalid triangulation faces, those faces will be selected in scene.\nBonus: If there is nothing selected (or they are invisible) after this error message, consider to delete history, that might fix the problem.')
-    if bad_faces2.length() > 0:
-        component = MFnSingleIndexedComponent()
-        face_component = component.create(
-            MFn.kMeshPolygonComponent)
-        component.addElements(bad_faces2)
-        selections = MSelectionList()
-        selections.add(mesh_dagpath, face_component)
-        MGlobal.selectCommand(selections)
-        raise helper.FunnyError(
-            f'SO Expoter ({mesh.name()}): Mesh contains {bad_faces2.length()} faces have no UVs assigned, or, those faces UVs are not in current UV set, those faces will be selected in scene.\nBonus: If there is nothing selected (or they are invisible) after this error message, consider to delete history, that might fix the problem.')
+        left_v = right_v
+        left_t = right_t
 
-    # get shader
-    instance = mesh_dagpath.instanceNumber() if mesh_dagpath.isInstanced() else 0
-    shaders = MObjectArray()
-    face_shader = MIntArray()
-    mesh.getConnectedShaders(instance, shaders, face_shader)
-    if shaders.length() > 1:
-        raise helper.FunnyError(
-            f'SO Expoter ({mesh.name()}): More than 1 material assigned to this mesh.')
-    # material name
-    if shaders.length() > 0:
-        ss = MFnDependencyNode(
-            shaders[0]).findPlug('surfaceShader')
-        plugs = MPlugArray()
-        ss.connectedTo(plugs, True, False)
-        material = MFnDependencyNode(plugs[0].node())
-        so.material = material.name()
-        if len(so.material) > 64:
-            raise helper.FunnyError(
-                f'SO Expoter ({mesh.name()}): Material name is too long: {so.material} with {len(so.material)} chars, max allowed: 64 chars.')
-    else:
-        # its only allow 1 material anyway
-        so.material = 'standardSurface69'
-    
-    # set flags
-    so.flags = pyRitoFile.so.SOFlag.HasLocalOriginLocatorAndPivot
-    if 'scb_flags' in dump_options:
-        so.flags = dump_options['scb_flags']
-"""
+    # bounding box
+    bbox = mesh.boundingBox
+    x_min, y_min, z_min, _ = bbox.min
+    x_max, y_max, z_max, _ = bbox.max
+
+    return pyRitoFile.scb.StaticComponent(
+        None, None, 2, mesh_name, 
+        central, None, 
+        ((-x_min, y_min, z_min), (-x_max, y_max, z_max)), 'lambert1', 
+        indices, positions, uvs, []
+    )
+
+@helper.print_traceback
+def write_scb(scb_path):
+    # selected dagpath
+    selections = om.MGlobal.getActiveSelectionList()
+    iterator = om.MItSelectionList(selections, om.MFn.kMesh)
+    if iterator.isDone():
+        raise helper.FunnyError(f'SCB Exporter: Please select a mesh to export.')
+    selected_dagpath = iterator.getDagPath()
+    iterator.next()
+    if not iterator.isDone():
+        raise helper.FunnyError(f'SCB Exporter: Please select only one mesh to export.')
+    # write scb
+    scb_path = helper.ensure_ext(scb_path, '.scb')
+    pyRitoFile.scb.write(
+        dump_scb({ 'selected_mesh': selected_dagpath }),
+        scb_path
+    )

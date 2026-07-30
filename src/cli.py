@@ -1,33 +1,11 @@
-import sys
-from argparse import ArgumentParser
-
-def parse_arguments():
-    # arg parse
-    parser = ArgumentParser(
-        prog='LtMAO command line interface',
-        description='LtMAO stuffs here.')
-    parser.add_argument('-t', '--tool', type=str,
-                        help='Which tool to use: wadpack, wadunpack')
-    parser.add_argument('-src', '--source', type=str, help='Input file')
-    parser.add_argument('-dst', '--destination',
-                        type=str, help='Output file')
-    if len(sys.argv) == 1:
-        parser.print_help()
-        input()
-        sys.exit(-1)
-    return parser.parse_args()
-
-
-def ensure_curdir():
-    import os, os.path
-    os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))))
+import sys, os, os.path, argparse
 
 
 class CLI:
     @staticmethod
     def wadpack(src, dst):
         from LtMAO import wad_tool
-        if dst == None:
+        if dst is None:
             dst = src
             if dst.endswith('.wad'):
                 dst += '.client'
@@ -38,9 +16,9 @@ class CLI:
 
     @staticmethod
     def wadunpack(src, dst):
-        from LtMAO import lepath, wad_tool, hash_helper
+        from LtMAO import wad_tool, hash_helper
         if dst is None:
-            dst = lepath.ext(src, '.wad.client', '.wad')
+            dst = src.removesuffix('.wad.client') + '.wad'
         hash_helper.read_hashes(False, True)
         wad_tool.unpack(src, dst, hash_helper.lookup)
         hash_helper.free_hashes()
@@ -375,11 +353,6 @@ class CLI:
         with zipfile.ZipFile(src, 'r') as zip:
             zip.extractall(dst)
 
-    def geb(src):
-        from LtMAO import bnk_tool
-        bnk_tool.guess_events_bnk(src)
-        input('Press enter to exit')
-
     def sync():
         from LtMAO import hash_helper
         hash_helper.init()
@@ -391,67 +364,83 @@ class CLI:
         preview = infinityQT.PreviewGUI()
         preview.set_central_widget(*infinityQT.build_tabs([src])[0])
         preview.show()
-        
 
-def main():
-    funcs = {
-        'wadpack':          lambda src, dst: CLI.wadpack(src, dst),
-        'wadunpack':        lambda src, dst: CLI.wadunpack(src, dst),
-        'wadunpack_all':    lambda src, dst: CLI.wadunpack_all(src, dst),
 
-        'ritobin':          lambda src, dst: CLI.ritobin(src, dst),
-        'ritobindir2py':    lambda src, dst: CLI.ritobindir(src, dst, True),
-        'ritobindir2bin':   lambda src, dst: CLI.ritobindir(src, dst, False),
+tools = {
+    'wadpack':          lambda src, dst: CLI.wadpack(src, dst),
+    'wadunpack':        lambda src, dst: CLI.wadunpack(src, dst),
+    'wadunpack_all':    lambda src, dst: CLI.wadunpack_all(src, dst),
 
-        'lfi':              lambda src, dst: CLI.lfi(src),
+    'ritobin':          lambda src, dst: CLI.ritobin(src, dst),
+    'ritobindir2py':    lambda src, dst: CLI.ritobindir(src, dst, True),
+    'ritobindir2bin':   lambda src, dst: CLI.ritobindir(src, dst, False),
 
-        'uvee':             lambda src, dst: CLI.uvee(src),
+    'lfi':              lambda src, dst: CLI.lfi(src),
 
-        'hashextract':      lambda src, dst: CLI.hashextract(src),
+    'uvee':             lambda src, dst: CLI.uvee(src),
 
-        'pyntex':           lambda src, dst: CLI.pyntex(src),
-        'pyntexdeljunk':    lambda src, dst: CLI.pyntex(src, True),
+    'hashextract':      lambda src, dst: CLI.hashextract(src),
 
-        'tex2dds':          lambda src, dst: CLI.tex2dds(src),
-        'dds2tex':          lambda src, dst: CLI.dds2tex(src),
-        'tex2ddsdir':       lambda src, dst: CLI.tex2ddsdir(src),
-        'dds2texdir':       lambda src, dst: CLI.dds2texdir(src),
+    'pyntex':           lambda src, dst: CLI.pyntex(src),
+    'pyntexdeljunk':    lambda src, dst: CLI.pyntex(src, True),
 
-        'dds2png':          lambda src, dst: CLI.dds2png(src, dst),
-        'png2dds':          lambda src, dst: CLI.png2dds(src, dst),
-        'png2ddsmm':        lambda src, dst: CLI.png2ddsmm(src, dst),
+    'tex2dds':          lambda src, dst: CLI.tex2dds(src),
+    'dds2tex':          lambda src, dst: CLI.dds2tex(src),
+    'tex2ddsdir':       lambda src, dst: CLI.tex2ddsdir(src),
+    'dds2texdir':       lambda src, dst: CLI.dds2texdir(src),
 
-        'dds2x4x':          lambda src, dst: CLI.dds2x4x(src),
+    'dds2png':          lambda src, dst: CLI.dds2png(src, dst),
+    'png2dds':          lambda src, dst: CLI.png2dds(src, dst),
+    'png2ddsmm':        lambda src, dst: CLI.png2ddsmm(src, dst),
 
-        'wem2wav':          lambda src, dst: CLI.wem2wav(src),
-        'wav2wem':          lambda src, dst: CLI.wav2wem(src),
-        'ogg2wem':          lambda src, dst: CLI.ogg2wem(src),
-        'wem2wavdir':       lambda src, dst: CLI.wem2wavdir(src),
-        'wav2wemdir':       lambda src, dst: CLI.wav2wemdir(src),
-        'ogg2wemdir':       lambda src, dst: CLI.ogg2wemdir(src),
+    'dds2x4x':          lambda src, dst: CLI.dds2x4x(src),
 
-        'dir2bnk':          lambda src, dst: CLI.dir2bnk(src, dst),
-        'dir2wpk':          lambda src, dst: CLI.dir2wpk(src, dst),
-        'bnk2dir':          lambda src, dst: CLI.bnk2dir(src, dst),
-        'wpk2dir':          lambda src, dst: CLI.wpk2dir(src, dst),
+    'wem2wav':          lambda src, dst: CLI.wem2wav(src),
+    'wav2wem':          lambda src, dst: CLI.wav2wem(src),
+    'ogg2wem':          lambda src, dst: CLI.ogg2wem(src),
+    'wem2wavdir':       lambda src, dst: CLI.wem2wavdir(src),
+    'wav2wemdir':       lambda src, dst: CLI.wav2wemdir(src),
+    'ogg2wemdir':       lambda src, dst: CLI.ogg2wemdir(src),
 
-        'geb':              lambda src, dst: CLI.geb(src),
+    'dir2bnk':          lambda src, dst: CLI.dir2bnk(src, dst),
+    'dir2wpk':          lambda src, dst: CLI.dir2wpk(src, dst),
+    'bnk2dir':          lambda src, dst: CLI.bnk2dir(src, dst),
+    'wpk2dir':          lambda src, dst: CLI.wpk2dir(src, dst),
+    'zipfantome':       lambda src, dst: CLI.zipfantome(src),
+    'unzipfantome':     lambda src, dst: CLI.unzipfantome(src),
 
-        'zipfantome':       lambda src, dst: CLI.zipfantome(src),
-        'unzipfantome':     lambda src, dst: CLI.unzipfantome(src),
+    'sync':             lambda src, dst: CLI.sync(),
 
-        'sync':             lambda src, dst: CLI.sync(),
-
-        'infinityQT':         lambda src, dst: CLI.infinityQT(src),
-    }
-
-    args = parse_arguments()
-    ensure_curdir()
-    funcs[args.tool](args.source, args.destination)
+    'infinityQT':         lambda src, dst: CLI.infinityQT(src),
+}    
 
 if __name__ == '__main__':
     try:
-        main()
+        # change working dir to LtMAO dir
+        os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0]))))
+        # create parser
+        parser = argparse.ArgumentParser(
+            prog='LtMAO command line interface',
+            description='LtMAO stuffs here.'
+        )
+        parser.add_argument(
+            '-t', '--tool', type=str,
+            help=f'Tools: {", ".join(tools)}.',
+        )
+        parser.add_argument(
+            '-src', '--source', type=str, 
+            help='Input file path.'
+        )
+        parser.add_argument('-dst', '--destination', type=str, 
+            help='Output file path.'
+        )
+        if len(sys.argv) == 1:
+            parser.print_help()
+            input()
+            sys.exit(-1)
+        # parse args and execute 
+        args = parser.parse_args()
+        tools[args.tool](args.source, args.destination)
         sys.exit(0)
     except Exception as e:
         import traceback

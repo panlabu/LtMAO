@@ -2,9 +2,23 @@ from math import sqrt, acos, sin
 
 try:
     from xxhash import xxh64_intdigest, xxh3_64_intdigest as hash_xxh3_64
-except:
+except ImportError:
     hash_xxh3_64 = lambda: 0
     print('Warning: pyRitoFile.maths failed to import xxhash.')
+
+def is_fnv1a_hex(s):
+    if len(s) != 8: return None
+    try: 
+        return int(s, 16)
+    except ValueError:
+        return None
+    
+def is_xxh64_hex(s):
+    if len(s) != 16: return None
+    try: 
+        return int(s, 16)
+    except ValueError:
+        return None
 
 def hash_elf(s):
     h = 0

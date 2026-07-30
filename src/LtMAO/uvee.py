@@ -1,87 +1,37 @@
 import os, os.path
-from . import lepath, pyRitoFile
-from PIL import Image, ImageDraw
+from . import pyRitoFile
 
-TEXTURE_SIZE = 1024
-UV_COLOR = 0xFFFFFFFF
+def write_svg(svg_path, uvs, indices):
+    with open(svg_path, 'w') as f:
+        f.write(f'<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg" style="background-color:transparent;">\n')
+        for i in range(0, len(indices), 3):
+            u1, v1 = uvs[indices[i]]
+            u2, v2 = uvs[indices[i+1]]
+            u3, v3 = uvs[indices[i+2]]
+            f.write(f'<polygon points="{u1*1024},{(1.0-v1)*1024} {u2*1024},{(1.0-v2)*1024} {u3*1024},{(1.0-v3)*1024}" fill="none" stroke="pink" stroke-width="1"/>\n')
+        f.write('</svg>')
+    print(f'uvee: Finish: Write SVG: {svg_path}')
 
-def uvee_skn(path):
-    imgs = []
-    # read file
-    skn = pyRitoFile.skn.SKN().read(path)
+def uvee_skn(skn_path):
+    skn = pyRitoFile.skn.read(skn_path)
     for submesh in skn.submeshes:
-        # init values
-        vertex_start = submesh.vertex_start
-        vertex_end = vertex_start+submesh.vertex_count
-        index_start = submesh.index_start
-        index_end = index_start+submesh.index_count
-        # get vertices, indices of this submesh
-        vertices = skn.vertices[vertex_start:vertex_end]
-        indices = skn.indices[index_start:index_end]
-        # normalize indices
+        uvs = skn.vertices[4][submesh.vertex_start:submesh.vertex_start+submesh.vertex_count]
+        indices = skn.indices[submesh.index_start:submesh.index_start+submesh.index_count]
         min_index = min(indices)
         indices = [index-min_index for index in indices]
-        index_count = len(indices)
-        face_count = index_count // 3
-        # create pil image
-        img = Image.new('RGBA', (TEXTURE_SIZE, TEXTURE_SIZE))
-        draw = ImageDraw.Draw(img)
-        for i in range(face_count):
-            vertex1 = vertices[indices[i*3]]
-            vertex2 = vertices[indices[i*3+1]]
-            vertex3 = vertices[indices[i*3+2]]
-            draw.line((TEXTURE_SIZE * vertex1.uv.x, TEXTURE_SIZE * vertex1.uv.y, TEXTURE_SIZE *
-                      vertex2.uv.x, TEXTURE_SIZE * vertex2.uv.y), fill=UV_COLOR)
-            draw.line((TEXTURE_SIZE * vertex2.uv.x, TEXTURE_SIZE * vertex2.uv.y, TEXTURE_SIZE *
-                      vertex3.uv.x, TEXTURE_SIZE * vertex3.uv.y), fill=UV_COLOR)
-            draw.line((TEXTURE_SIZE * vertex3.uv.x, TEXTURE_SIZE * vertex3.uv.y, TEXTURE_SIZE *
-                      vertex1.uv.x, TEXTURE_SIZE * vertex1.uv.y), fill=UV_COLOR)
-        # save pil image
-        dir = os.path.dirname(path)
-        base = lepath.ext(os.path.basename(path), '.skn', '')
-        uvee_dir = dir+f'/uvee_{base}'
-        os.makedirs(uvee_dir, exist_ok=True)
-        img_path = lepath.join(
-            uvee_dir, f'{submesh.name}.png')
-        img.save(img_path)
-        print(f'uvee: Finish: Extract UV: {img_path}')
-        imgs.append((submesh.name, img))
+        dirname, basename = os.path.split(skn_path)
+        svg_path = os.path.join(dirname, f'{submesh.name}.{basename}.svg')
+        write_svg(svg_path, uvs, indices)
 
+def uvee_scb(scb_path):
+    scb = pyRitoFile.scb.read(scb_path)
+    svg_path = scb_path + '.svg'
+    write_svg(svg_path, scb.uvs, scb.indices)
 
-def uvee_so(path):
-    # read file
-    if path.endswith('.sco'):
-        so = pyRitoFile.so.SO().read_sco(path)
-    else:
-        so = pyRitoFile.so.SO().read_scb(path)
-    # init values
-    uvs = so.uvs
-    face_count = len(uvs) // 3
-    # create pil image
-    img = Image.new('RGBA', (TEXTURE_SIZE, TEXTURE_SIZE))
-    draw = ImageDraw.Draw(img)
-    for i in range(face_count):
-        uv1 = uvs[i*3]
-        uv2 = uvs[i*3+1]
-        uv3 = uvs[i*3+2]
-        draw.line((TEXTURE_SIZE * uv1.x, TEXTURE_SIZE * uv1.y, TEXTURE_SIZE *
-                   uv2.x, TEXTURE_SIZE * uv2.y), fill=UV_COLOR)
-        draw.line((TEXTURE_SIZE * uv2.x, TEXTURE_SIZE * uv2.y, TEXTURE_SIZE *
-                   uv3.x, TEXTURE_SIZE * uv3.y), fill=UV_COLOR)
-        draw.line((TEXTURE_SIZE * uv3.x, TEXTURE_SIZE * uv3.y, TEXTURE_SIZE *
-                   uv1.x, TEXTURE_SIZE * uv1.y), fill=UV_COLOR)
-    # save pil image
-    dir = os.path.dirname(path)
-    base = lepath.ext(lepath.ext(os.path.basename(path), '.sco', ''), '.scb', '')
-    img_path = lepath.join(dir, f'uvee_{base}.png')
-    img.save(img_path)
-    print(f'uvee: Finish: Extract UV: {img_path}')
-
-
-def uvee_file(path):
+def uvee(path):
     if path.endswith('.skn'):
         uvee_skn(path)
-    elif path.endswith('.scb') or path.endswith('.sco'):
-        uvee_so(path)
+    elif path.endswith(('.scb', '.sco')):
+        uvee_scb(path)
 
 

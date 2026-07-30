@@ -2,8 +2,8 @@ try:
     import requests
 except ImportError: 
     print('Warning: hash_helper failed to import requests.')
-import os, json, traceback, threading, shutil
-from . import lepath, pyRitoFile, stash
+import os, os.path, json, traceback, threading, shutil
+from . import pyRitoFile, stash
 
 hashes_dir = './pref/hashes'
 cdtb_dir = f'{hashes_dir}/cdtb'
@@ -38,7 +38,7 @@ wfhs = (
 # simple read write
 def read_hash(h, fh, sl1, sl2):
     i = int
-    with open(fh, 'a+', encoding='ascii') as f:
+    with open(fh, 'a+', encoding='utf-8') as f:
         f.seek(0)
         for line in f:
             h[i(line[sl1], 16)] = line[sl2]
@@ -58,7 +58,7 @@ def read_hashes(b, w):
     h = hashes
     i = int
     for fh, sl1, sl2, _ in fhs:
-        with open(fh, 'a+', encoding='ascii') as f:
+        with open(fh, 'a+', encoding='utf-8') as f:
             f.seek(0)
             for line in f:
                 h[i(line[sl1], 16)] = line[sl2]
@@ -76,10 +76,19 @@ def human_size(nbytes):
         return f"{f'{nbytes/1048576:.2f}'.rstrip('0').rstrip('.')} MB"
     return f"{f'{nbytes/1073741824:.2f}'.rstrip('0').rstrip('.')} GB"
 
-def total_size(path): return human_size(sum(map(lepath.getsize, lepath.walk(path))))
+def total_size(path): 
+    return human_size(sum(map(
+        os.path.getsize, 
+        [
+            os.path.join(root, file)
+            for root, dirs, files in os.walk(path)
+            for file in files
+        ]
+    )))
 
 def sync_hashes():
-    # init 
+    # init
+    session = requests.Session()
     etags = {}
     cdtb_remote = 'https://raw.communitydragon.org/data/hashes/lol'
     rfhs = (
@@ -94,22 +103,22 @@ def sync_hashes():
     lfhs = [fh for fh, _, _, _ in cfhs]
     def sync_hash(lfh, rfh):
         try:
-            get = requests.get(rfh, stream=True)
-            get.raise_for_status()
-            letag = etags.get(rfh, None)
-            retag = get.headers['Etag']
-            if not lepath.exists(lfh) or letag is None or letag != retag:
+            hget = session.get(rfh, stream=True)
+            hget.raise_for_status()
+            letag = etags.get(rfh)
+            retag = hget.headers.get('Etag')
+            if not os.path.exists(lfh) or letag is None or letag != retag:
                 print(f'hash_helper: Downloading: {rfh}')
-                etags[rfh] = retag
                 with open(lfh, 'wb') as f:
-                    for chunk in get.iter_content(1024**2):
+                    for chunk in hget.iter_content(1024**2):
                         f.write(chunk)
+                etags[rfh] = retag
         except Exception as e:
             print(f'hash_helper: Error: Sync hash: {rfh}: {e}')
             print(traceback.format_exc())
 
     # read etags
-    if lepath.exists(etag_file):
+    if os.path.exists(etag_file):
         with open(etag_file, 'r') as f:
             etags = json.load(f)
     # sync
@@ -197,13 +206,17 @@ def extract_hashes(*file_paths):
                 if data.startswith(prefixes):
                     game[wad_hasher[data]] = data
                     if data.endswith('.dds'):
-                        dirname, basename = lepath.split(data)
-                        data2x = lepath.join(dirname, f'2x_{basename}')
-                        data4x = lepath.join(dirname, f'4x_{basename}')
+                        if "/" in data:
+                            dirname, _, basename = data.rpartition('/')
+                            data2x = f'{dirname}/2x_{basename}'
+                            data4x = f'{dirname}/4x_{basename}'
+                        else:
+                            data2x = f'2x_{data}'
+                            data4x = f'4x_{data}'
                         game[wad_hasher[data2x]] = data2x
                         game[wad_hasher[data4x]] = data4x
                     elif data.endswith('.bin'):
-                        datapy = lepath.ext(data, '.bin', '.py')
+                        datapy = data.removesuffix('.bin') + '.py'
                         game[wad_hasher[datapy]] = datapy
             elif data_type in list_types:
                 value_type, values = data
@@ -271,7 +284,7 @@ def extract_hashes(*file_paths):
         print(f'hash_helper: Finish: Extract: {fh}')
 
 def clear_extracted():
-    shutil.rmtree(lepath.abs(extracted_dir))
+    shutil.rmtree(os.path.abspath(extracted_dir))
     os.makedirs(extracted_dir, exist_ok=True)
     print(f'hash_helper: Finish: Clear: {extracted_dir}')
 

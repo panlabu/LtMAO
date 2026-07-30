@@ -2,9 +2,9 @@ from struct import unpack, iter_unpack, pack
 from io import BytesIO
 
 class StaticComponent:
-    __slots__ = ('signature', 'version', 'flags', 'name', 'central', 'pivot', 'bounding_box', 'material', 'vertex_type', 'indices', 'positions', 'uvs', 'colors')
+    __slots__ = ('signature', 'version', 'flags', 'name', 'central', 'pivot', 'bounding_box', 'material', 'indices', 'positions', 'uvs', 'colors')
 
-    def __init__(self, signature, version, flags, name, central, pivot, bounding_box, material, vertex_type, indices, positions, uvs, colors):
+    def __init__(self, signature, version, flags, name, central, pivot, bounding_box, material, indices, positions, uvs, colors):
         self.signature = signature
         self.version = version
         self.flags = flags
@@ -13,7 +13,6 @@ class StaticComponent:
         self.pivot = pivot
         self.bounding_box = bounding_box
         self.material = material
-        self.vertex_type = vertex_type
         self.indices = indices
         self.positions = positions
         self.uvs = uvs
@@ -31,7 +30,6 @@ def read(path):
         central = (0, 0, 0)
         bounding_box = None
         material = ''
-        vertex_type = 0
         indices = []
         positions = []
         uvs = []
@@ -82,7 +80,7 @@ def read(path):
             bs.seek(8)
             major, minor = unpack('<HH', bs.read(4))
             if major not in {3, 2} and minor != 1:
-                raise Exception(f'pyRitoFile: Error: Read SCB {path}: Unsupported file version: {major}.{minor}')
+                raise Exception(f'pyRitoFile: Error: Read SCB: Unsupported file version: {major}.{minor}')
             # various
             ud = unpack('<128s3I6f', bs.read(164))
             name = ud[0].rstrip(b'\x00').decode()
@@ -92,10 +90,11 @@ def read(path):
                 (ud[7], ud[8], ud[9])
             )
             # vertex
+            vertex_type = 0
             if major == 3 and minor == 2:
                 vertex_type = int.from_bytes(bs.read(4), 'little')
             positions = [*iter_unpack('<3f', bs.read(vertex_count*12))]
-            if vertex_type >= 1:
+            if vertex_type > 0:
                 colors = [*iter_unpack('<4B', bs.read(vertex_count*4))]
             central = unpack('<3f', bs.read(12))
             # face
@@ -112,7 +111,7 @@ def read(path):
                     (ud[6], ud[9])
                 ))
         else:
-            raise Exception(f'pyRitoFile: Error: Read SCB {path}: Wrong file signature: {signature}')
+            raise Exception(f'pyRitoFile: Error: Read SCB: Wrong file signature: {signature}')
 
     return StaticComponent(
         signature,
@@ -123,7 +122,6 @@ def read(path):
         pivot,
         bounding_box,
         material,
-        vertex_type,
         indices,
         positions,
         uvs,
@@ -146,30 +144,32 @@ def write(statcomp, path=None):
                 if y < y_min: y_min = y
                 if z < z_min: z_min = z
             statcomp.bounding_box = ((x_min, y_min, z_min), (x_max, y_max, z_max))
+        vertex_type = 1 if statcomp.colors else 0
         # header
         bs.write(pack('<8sHH', b'r3d2Mesh', 3, 2))
         # various
-        face_count = len(statcomp.indices) // 3
+        index_count = len(statcomp.indices)
+        face_count = index_count // 3
+        vertex_count = len(statcomp.positions)
         bs.write(pack(
             '<128s3I6fI',
             statcomp.name.encode(),
-            len(statcomp.positions),
+            vertex_count,
             face_count,
             statcomp.flags,
             *statcomp.bounding_box[0],
             *statcomp.bounding_box[1],
-            statcomp.vertex_type
+            vertex_type
         ))
-        
         # positions
         bs.write(pack(
-            f'<{len(statcomp.positions)*3}f',
+            f'<{vertex_count*3}f',
             *[v for p in statcomp.positions for v in p]
         ))
         # colors
-        if statcomp.vertex_type >= 1:
+        if vertex_type > 0:
             bs.write(pack(
-                f'<{len(statcomp.colors)*4}B',
+                f'<{vertex_count*4}B',
                 *[v for c in statcomp.colors for v in c]
             ))
         # central
@@ -178,8 +178,7 @@ def write(statcomp, path=None):
         indices = statcomp.indices
         material = statcomp.material.encode()
         uvs = statcomp.uvs
-        for i in range(face_count):
-            index = i * 3
+        for index in range(0, index_count, 3):
             bs.write(pack(
                 '<3I64s6f',
                 indices[index],

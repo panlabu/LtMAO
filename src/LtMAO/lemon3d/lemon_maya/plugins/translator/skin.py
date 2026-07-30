@@ -1,7 +1,8 @@
 from maya import OpenMayaMPx as omMPx, cmds
 from maya.api import OpenMaya as om, OpenMayaAnim as omAnim
-from ..... import lepath, pyRitoFile
+from ..... import pyRitoFile
 from . import helper
+import os.path
 
 class sknImporter(omMPx.MPxFileTranslator):
     name = 'League of Legends: SKN'
@@ -134,7 +135,7 @@ class sklExporter(omMPx.MPxFileTranslator):
 @helper.print_traceback
 def read_skl(skl_path):
     # ensure path
-    skl_path = lepath.ensure_ext(skl_path, '.skl')
+    skl_path = helper.ensure_ext(skl_path, '.skl')
     skl_name = helper.extract_name(skl_path)
     # group transform
     group_transform_name = f'group_{skl_name}'
@@ -205,7 +206,7 @@ def load_skl(skl, load_options):
                 joint_id
             )
             num_attr.setMin(0)
-            num_attr.setMax(255)
+            num_attr.setMax(65535)
             ik_joint.addAttribute(rid)
 
 
@@ -273,19 +274,19 @@ def dump_skl(dump_options):
         # sort joint with attribute
         print('SKL Exporter: Sorting joints...')
         # init
-        joints = [None] * 256
+        assigned_joints = {}
         new_joints = []
         # find riotID attribute
         for sj in scene_joints:
             ik_joint = ik_joints.get(sj.name)
             if ik_joint.hasAttribute('riotID'):
                 rid = ik_joint.findPlug('riotID', False).asInt()
-                if 0 <= rid < 256 and joints[rid] is None:
-                    joints[rid] = sj
+                if rid not in assigned_joints:
+                    assigned_joints[rid] = sj
                     continue
             new_joints.append(sj)
         # add new
-        joints = [j for j in joints if j is not None]
+        joints = [assigned_joints[joint_id] for joint_id in sorted(assigned_joints)]
         joints.extend(new_joints)
 
     # parent
@@ -298,15 +299,11 @@ def dump_skl(dump_options):
         else:
             joint.parent = -1
 
-    # check limit joint
-    joint_count = len(joints)
-    if joint_count > 256:
-        raise helper.FunnyError(
-            f'SKL Exporter: Too many joints found: {joint_count}, max allowed: 256 joints.')
-
     return pyRitoFile.skl.Skeleton(
-        None, None, None, None, None, None,
-        joints, [*range(joint_count)]
+        None, 
+        None,
+        joints, 
+        [] # influences are built inside skn dump
     )
 
 @helper.print_traceback
@@ -323,11 +320,11 @@ def write_skl(skl_path):
     if not iterator.isDone():
         raise helper.FunnyError('SKL Exporter: Please select only one group to export.')
     # dump and write skl
-    skl_path = lepath.ensure_ext(skl_path, '.skl')
+    skl_path = helper.ensure_ext(skl_path, '.skl')
     pyRitoFile.skl.write(
         dump_skl({
             'selected_group': selected_dagpath,
-            'riot_skl': pyRitoFile.skl.read(rsp) if lepath.exists(rsp:=lepath.prefix('riot_', skl_path)) else None
+            'riot_skl': pyRitoFile.skl.read(rsp) if os.path.exists(rsp:=helper.prefix('riot_', skl_path)) else None
         }),
         skl_path
     )
@@ -335,8 +332,8 @@ def write_skl(skl_path):
 @helper.print_traceback
 def read_skn(skn_path):
     # ensure path
-    skn_path = lepath.ensure_ext(skn_path, '.skn')
-    skl_path = lepath.ext(skn_path, '.skn', '.skl')
+    skn_path = helper.ensure_ext(skn_path, '.skn')
+    skl_path = skn_path.removesuffix('.skn') + '.skl'
     skn_name = helper.extract_name(skn_path)
     # group transform
     group_transform = om.MFnTransform()
@@ -348,7 +345,7 @@ def read_skn(skn_path):
         'skn_name': skn_name,
         'skl': None
     }
-    if lepath.exists(skl_path):
+    if os.path.exists(skl_path):
         load_options['skl'] = skl = pyRitoFile.skl.read(skl_path)
         load_skl(skl, load_options)
     # read and load skn
@@ -374,10 +371,9 @@ def load_skn(skn, load_options):
     dg_modifier = om.MDGModifier()
     # binding related
     if skl is not None:
-        joint_names = [joint.name for joint in skl.joints]
-        joint_names_set = set(joint_names)
-        influence_count = len(joint_names)
-        influences = om.MIntArray(range(influence_count))
+        joint_names_set = {joint.name for joint in skl.joints}
+        influence_names = [skl.joints[influence].name for influence in skl.influences]
+        influence_count = len(influence_names)
         components = om.MFnSingleIndexedComponent()
         vertex_components = components.create(om.MFn.kMeshVertComponent)
     # create mesh for each submesh
@@ -448,7 +444,7 @@ def load_skn(skn, load_options):
             # bind mesh and get skincluster
             cmds.skinCluster(
                 mesh_name,
-                joint_names,
+                influence_names,
                 name=f'{mesh_name}_skinCluster',
                 toSelectedBones=True,
                 maximumInfluences=4,
@@ -456,26 +452,36 @@ def load_skn(skn, load_options):
                 dropoffRate=0.1
             )
             skin_cluster = omAnim.MFnSkinCluster(om.MItDependencyGraph(mesh_object, om.MFn.kSkinClusterFilter, om.MItDependencyGraph.kUpstream).currentNode())
+            skin_cluster_name = skin_cluster.name()
 
             # init 
-            submesh_influences = skn.vertices[1][vertex_slice]
+            submesh_influence_ids = skn.vertices[1][vertex_slice]
             submesh_weights = skn.vertices[2][vertex_slice]
             vertex_count = submesh.vertex_count
             components.setCompleteData(vertex_count)
             flat_weights = [0.0] * (influence_count * vertex_count)
+            # convert skeleton influence ids to mesh influence ids
+            source_influence_ids = {
+                om.MFnDependencyNode(influence_dagpath.node()).name(): skin_cluster.indexForInfluenceObject(influence_dagpath)
+                for influence_dagpath in skin_cluster.influenceObjects()
+            }
+            converted_influence_ids = [
+                source_influence_ids[influence_name]
+                for influence_name in influence_names
+            ]
+    
             # populate flat weights
-            for vertex_id, ((inf1, inf2, inf3, inf4), (w1, w2, w3, w4)) in enumerate(zip(submesh_influences, submesh_weights)):
+            for vertex_id, (inf_ids, ws) in enumerate(zip(submesh_influence_ids, submesh_weights)):
                 offset = vertex_id * influence_count
-                flat_weights[offset+inf1] = w1
-                flat_weights[offset+inf2] = w2
-                flat_weights[offset+inf3] = w3
-                flat_weights[offset+inf4] = w4
+                for inf_id, w in zip(inf_ids, ws):
+                    if w > 0:
+                        flat_weights[offset+inf_id] = w    
             flat_weights = om.MDoubleArray(flat_weights)
             # set weights
             skin_cluster.setWeights(
                 mesh.getPath(),
                 vertex_components,
-                influences, 
+                om.MIntArray(converted_influence_ids),
                 flat_weights,
                 normalize=True
             )
@@ -496,21 +502,19 @@ def write_skn(skn_path):
     if not iterator.isDone():
         raise helper.FunnyError('SKN Exporter: Please select only one group to export.')
     # init
-    skn_path = lepath.ensure_ext(skn_path, '.skn')
-    skl_path = lepath.ext(skn_path, '.skn', '.skl')
+    skn_path = helper.ensure_ext(skn_path, '.skn')
+    skl_path = skn_path.removesuffix('.skn') + '.skl'
     dump_options = {
         'selected_group': selected_dagpath,
-        'riot_skl': pyRitoFile.skl.read(rsp) if lepath.exists(rsp:=lepath.prefix('riot_', skl_path)) else None,
-        'riot_skn': pyRitoFile.skn.read(rsp) if lepath.exists(rsp:=lepath.prefix('riot_', skn_path)) else None
+        'riot_skl': pyRitoFile.skl.read(rsp) if os.path.exists(rsp:=helper.prefix('riot_', skl_path)) else None,
     }
-    # dump and write skl
+    # dump and write skin
     skl = dump_skl(dump_options)
-    pyRitoFile.skl.write(skl, skl_path)
-    # dump and write skn
     pyRitoFile.skn.write(
         dump_skn(skl, dump_options),
         skn_path
     )
+    pyRitoFile.skl.write(skl, skl_path)
 
 
     
@@ -519,9 +523,10 @@ def dump_skn(skl, dump_options):
     components = om.MFnSingleIndexedComponent()
     vertex_component = components.create(om.MFn.kMeshVertComponent)
     sc_iterator = om.MItDependencyGraph()
+    joint_count = len(skl.joints)
     joint_ids = {joint.name: joint_id for joint_id, joint in enumerate(skl.joints)}
-    active_fills = [[(0, 0)]*i for i in range(5)]
-    combined_elements = {}
+    influences = set()
+    combined_vertices = {}
     combined_indices = {}
 
     def dump_mesh(mesh):
@@ -541,7 +546,7 @@ def dump_skn(skl, dump_options):
         material_count = len(shading_engines)
         if material_count == 0:
             raise helper.FunnyError(f'SKN Exporter: {mesh.name()} has no material assigned.')
-        submesh_elements = [None] * material_count
+        submesh_vertices = [None] * material_count
         submesh_indices = [None] * material_count
         cached_lookups = [None] * material_count
         for material_id, shading_engine in enumerate(shading_engines):
@@ -550,20 +555,20 @@ def dump_skn(skl, dump_options):
             plugs = surface_shader.connectedTo(True, False)
             name = om.MFnDependencyNode(plugs[0].node()).name()
             # local submesh data
-            elements = [[], [], [], [], []]
-            submesh_elements[material_id] = elements
+            vertices = [[], [], [], [], []]
+            submesh_vertices[material_id] = vertices
             indices = []
             submesh_indices[material_id] = indices
             # global combined data map
-            combined_elements.setdefault(name, []).append(elements)
+            combined_vertices.setdefault(name, []).append(vertices)
             combined_indices.setdefault(name, []).append(indices)
             # cached relevant pointers per material 
             cached_lookups[material_id] = (
-                elements[0].append, 
-                elements[1].append, 
-                elements[2].append,
-                elements[3].append, 
-                elements[4].append,
+                vertices[0].append, 
+                vertices[1].append, 
+                vertices[2].append,
+                vertices[3].append, 
+                vertices[4].append,
                 indices.append,  
                 {} # uniques
             )
@@ -575,38 +580,45 @@ def dump_skn(skl, dump_options):
         components.setCompleteData(vertex_count)
         flat_weights, influence_count = skin_cluster.getWeights(mesh.getPath(), vertex_component)
         flat_weights = tuple(flat_weights)
-        # get inf_to_joint: use this to convert mesh influence id to global skl joint id
+        # convert mesh influence ids to skeleton influences (joint ids) for now
+        converted_influences = [None] * influence_count
         influence_dagpaths = skin_cluster.influenceObjects()
-        inf_to_joint = [
-            joint_ids[om.MFnDependencyNode(influence_dagpath.node()).name()]
-            for influence_dagpath in influence_dagpaths
-        ]
+        for influence_id, influence_dagpath in enumerate(influence_dagpaths):
+            influence_name = om.MFnDependencyNode(influence_dagpath.node()).name()
+            influence = joint_ids.get(influence_name)
+            if influence is None:
+                raise helper.FunnyError(f'SKN Exporter: {influence_name} is not inside selected group. Please move all bound joints into skin group.')
+            converted_influences[influence_id] = influence
         # get normals
         normals = tuple(mesh.getVertexNormals(False))
 
-        # cached element data except uv
-        cached_elements = [None] * vertex_count
+        # cached vertex attributes except uv
+        cached_vertices = [None] * vertex_count
         for vertex_id, ((px, py, pz, _), (nx, ny, nz)) in enumerate(zip(positions, normals)):
-            # influences and weights
+            # influences (joint ids) and weights
             left = vertex_id * influence_count
             right = left + influence_count
             active = [
-                (w, joint_id)
-                for w, joint_id in zip(flat_weights[left:right], inf_to_joint)
+                (w, inf)
+                for w, inf in zip(flat_weights[left:right], converted_influences)
                 if w > 0.001
             ]
             active.sort(reverse=True)
             active_count = len(active)
+            if active_count == 0:
+                raise helper.FunnyError(f'SKN Exporter: Vertex {vertex_id} on {mesh.name()} has no skin weights assigned.')
             if active_count < 4:
-                active.extend(active_fills[4-active_count])
-            (w0, w1, w2, w3), influences = zip(*active[:4])
+                active.extend([(0.0, active[0][1])] * (4 - active_count))
+            (w0, w1, w2, w3), infs = zip(*active[:4])
             # flip position and normal, normalize weight
-            cached_elements[vertex_id] = (
+            cached_vertices[vertex_id] = (
                 (-px, py, pz),
-                influences,
+                infs,
                 (w0/s, w1/s, w2/s, w3/s) if (s:=w0+w1+w2+w3) > 0 else (w0, w1, w2, w3), 
                 (nx, -ny, -nz)
             )
+            # add to skeleton influences (joint ids)
+            influences.update(infs)
 
         # get uv
         us, vs = mesh.getUVs()
@@ -647,13 +659,13 @@ def dump_skn(skl, dump_options):
                 key = (vertex_id, uv_id)
                 if key not in uniques:
                     uniques[key] = len(uniques)
-                    # cached elements
-                    position, influences, weights, normal = cached_elements[vertex_id]
+                    # extract cached vertex attribute
+                    position, infs, weights, normal = cached_vertices[vertex_id]
                     # uv
                     uv = (us[uv_id], 1-vs[uv_id])
                     # add to submesh data
                     add_pos(position)
-                    add_inf(influences)
+                    add_inf(infs)
                     add_w(weights)
                     add_nor(normal)
                     add_uv(uv)
@@ -673,6 +685,16 @@ def dump_skn(skl, dump_options):
             dump_mesh(mesh)
         iterator.next()
 
+    # build influences (joint ids)
+    skl.influences = influences = sorted(influences)
+    influence_count = len(influences)
+    if influence_count > 256:
+        raise helper.FunnyError(f'SKN Exporter: Too many influences found: {influence_count}, max allowed: 256 influences.')
+    converted_influence_ids = [None] * joint_count
+    # convert influence (joint id) to influence id map
+    for influence_id, influence in enumerate(influences):
+        converted_influence_ids[influence] = influence_id
+
     # build skin
     Submesh = pyRitoFile.skn.Submesh
     submeshes = [None] * len(combined_indices)
@@ -680,7 +702,7 @@ def dump_skn(skl, dump_options):
     vertex_start = 0
     vertices = {
         0: [], # position
-        1: [], # influences
+        1: [], # influence_ids
         2: [], # weights
         3: [], # normal
         4: [] # uv
@@ -689,13 +711,25 @@ def dump_skn(skl, dump_options):
     for submesh_index, name in enumerate(combined_indices):
         vertex_count = 0
         index_count = 0
-        for part_elements, part_indices in zip(combined_elements[name], combined_indices[name]):
-            for element_id, element_data in enumerate(part_elements):
-                vertices[element_id].extend(element_data)
-            
+        for part_vertices, part_indices in zip(combined_vertices[name], combined_indices[name]):
+            for attribute_id, attribute_data in enumerate(part_vertices):
+                if attribute_id != 1:
+                    vertices[attribute_id].extend(attribute_data)
+                else:
+                    # convert influences (joint ids) to influence_ids
+                    vertices[1].extend([
+                        (
+                            converted_influence_ids[inf0],
+                            converted_influence_ids[inf1],
+                            converted_influence_ids[inf2],
+                            converted_influence_ids[inf3]
+                        )
+                        for inf0, inf1, inf2, inf3 in attribute_data
+                    ])
+
             offset = vertex_start + vertex_count
             indices.extend([index + offset for index in part_indices])
-            vertex_count += len(part_elements[0])
+            vertex_count += len(part_vertices[0])
             index_count += len(part_indices)
 
         submeshes[submesh_index] = Submesh(
@@ -711,8 +745,8 @@ def dump_skn(skl, dump_options):
 
     # check limit vertices
     vertex_count = len(vertices[0])
-    if vertex_count > 65535:
-        raise helper.FunnyError(f'SKN Exporter: Too many vertices found: {vertex_count}, max allowed: 65535 vertices.')
+    if vertex_count > 65536:
+        raise helper.FunnyError(f'SKN Exporter: Too many vertices found: {vertex_count}, max allowed: 65536 vertices.')
 
     # check limit submeshes
     submesh_count = len(submeshes)
@@ -721,6 +755,6 @@ def dump_skn(skl, dump_options):
 
     return pyRitoFile.skn.Skin(
         None, (1, 1),
-        None, None, None, None, None,
+        None, None, None,
         submeshes, indices, vertices
     )

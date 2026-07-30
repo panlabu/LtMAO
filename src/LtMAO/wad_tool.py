@@ -1,87 +1,95 @@
-from . import lepath, pyRitoFile
-import os, json
+from . import pyRitoFile
+import os, os.path, json
 
-def unpack(wad_file, raw_dir, lookup, filter=None):
-    print(f'wad_tool: Start:  Unpack WAD: {wad_file}')
-    # read wad
+def unpack(wad_file, raw_dir, lookup, filters=None):
+    # init
+    is_xxh64_hex = pyRitoFile.maths.is_xxh64_hex
+    read_data = pyRitoFile.wad.read_data
+    print(f'wad_tool: Start: Unpack WAD: {wad_file}')
+    # read and unhash wad
     wad = pyRitoFile.wad.read(wad_file)
     pyRitoFile.wad.unhash(wad, lookup)
     # filter chunks
-    target_chunks = [chunk for chunk in wad.chunks if filter is None or chunk._hash in filter]
+    target_chunks = [chunk for chunk in wad.chunks if filters is None or chunk._hash in filters]
+    # get basename dirname of each file
+    files = [None] * len(target_chunks)
+    dirs = set()
+    for chunk_id, chunk in enumerate(target_chunks):
+        dirname, basename = os.path.split(os.path.join(raw_dir, chunk._hash))
+        files[chunk_id] = (dirname, basename)
+        dirs.add(dirname)
     # create dirs
-    file_paths = {}
-    dirnames = set()
-    for chunk in target_chunks:
-        dirname, basename = lepath.split(lepath.join(raw_dir, chunk._hash))
-        file_paths[chunk.hash] = (dirname, basename)
+    for dirname in dirs:
         os.makedirs(dirname, exist_ok=True)
-        dirnames.add(dirname)
     # extract files
-    is_hex = pyRitoFile.wad.is_hex
-    read_data = pyRitoFile.wad.read_data
     hashed_files = {}
     with open(wad_file, 'rb') as bs:
-        for chunk in target_chunks:
-            # read chunk data 
+        for chunk_id, chunk in enumerate(target_chunks):
+            # read chunk data to get chunk.extension
             chunk_data = read_data(chunk, bs)
-            dirname, basename = file_paths[chunk.hash]
-            # try add extension to hashed file
-            if is_hex(chunk._hash) and chunk.extension is not None:
+            dirname, basename = files[chunk_id]
+            # add extension to hashed file
+            if is_xxh64_hex(chunk._hash) is not None and chunk.extension is not None:
                 basename +=  f'.{chunk.extension}'
-            file_path = lepath.join(dirname, basename)
-            # long basename or match existed dirname
-            if len(basename) > 255 or file_path in dirnames:
+            file = os.path.join(dirname, basename)
+            # long basename or match existed dir
+            if len(basename) > 255 or os.path.isdir(file):
                 basename = f'{chunk.hash:016x}.{chunk.extension}' if chunk.extension is not None else f'{chunk.hash:016x}'
-                file_path =  lepath.join(raw_dir, basename)
+                file =  os.path.join(raw_dir, basename)
                 hashed_files[basename] = chunk._hash
-            # write out chunk data to file
-            with open(file_path, 'wb') as f:
+            # write chunk data to file
+            with open(file, 'wb') as f:
                 f.write(chunk_data)
     # remove empty dirs
     for root, dirs, files in os.walk(raw_dir, topdown=False):
-        if len(os.listdir(root)) == 0:
-            os.rmdir(root)
+        for dir in dirs:
+            try:
+                os.rmdir(os.path.join(root, dir))
+            except OSError:
+                pass
     # write hashed bins json
     if len(hashed_files) > 0:
-        with open(lepath.join(raw_dir, 'hashed_files.json'), 'w+', encoding='utf-8') as f:
+        with open(os.path.join(raw_dir, 'hashed_files.json'), 'w', encoding='utf-8') as f:
             json.dump(hashed_files, f, indent=4, ensure_ascii=False)
 
-
 def pack(raw_dir, wad_file):
-    print(f'wad_tool: Start:  Pack WAD: {raw_dir}')
-    # create wad first with only infos
-    chunk_datas = []
-    chunk_hashes = []
-    for root, dirs, files in os.walk(raw_dir):
-        for file in files:
-            # skip hashed bins json
-            if file == 'hashed_files.json':
-                continue
-            # prepare chunk datas
-            file_path = lepath.join(root, file)
-            chunk_datas.append(file_path)
-
-            # check hashed files
-            # hashed files are in root of the directory
-            # and also be a valid hexadecimal int file name
-            basename = os.path.basename(file)
-            relative_path = lepath.rel(file_path, raw_dir)
-            if pyRitoFile.wad.WADHasher.is_hash(basename.split('.')[0]) and relative_path == basename:
-                file_path = basename.split('.')[0]
-                chunk_hashes.append(file_path)
-            else:
-                chunk_hashes.append(lepath.rel(file_path, raw_dir))
-    # write wad
-    wad = pyRitoFile.wad.WAD()
-    wad.chunks = [pyRitoFile.wad.WADChunk.default()
-                  for id in range(len(chunk_hashes))]
-    wad.write(wad_file)
-    # write wad chunk
-    with pyRitoFile.stream.BytesStream.updater(wad_file) as bs:
-        for id, chunk in enumerate(wad.chunks):
-            with open(chunk_datas[id], 'rb') as f:
+    # init 
+    is_xxh64_hex = pyRitoFile.maths.is_xxh64_hex
+    hash_xxh64 = pyRitoFile.maths.hash_xxh64
+    Chunk = pyRitoFile.wad.Chunk
+    write_data = pyRitoFile.wad.write_data
+    print(f'wad_tool: Start: Pack WAD: {raw_dir}')
+    # chunk hashes = [(hash of rel_file, file to read data later)]
+    chunk_hashes = [
+        # if rel_file is hex.ext, convert hex to int 
+        (h, f) if (h:=is_xxh64_hex((rf:=os.path.relpath(f, raw_dir)).split('.', 1)[0])) is not None
+        # otherwise, hash_xxh64(rel_file)
+        else (hash_xxh64(rf.replace('\\', '/')), f)
+        # loop files
+        for root, dirs, files in os.walk(raw_dir)
+        for file in files
+        # filter out hashed_files.json
+        if not (f:=os.path.join(root, file)).endswith('hashed_files.json')
+    ]
+    # write empty wad
+    wad = pyRitoFile.wad.Archive(
+        None, None, 
+        [
+            Chunk(
+                chunk_id,
+                chunk_hash, None, 
+                0, 0, 0,
+                0, False, 0, None
+            )
+            for chunk_id, (chunk_hash, _) in enumerate(chunk_hashes)
+        ]
+    )
+    pyRitoFile.wad.write(wad, wad_file)
+    # write chunk data
+    previous_chunks = {}
+    with open(wad_file, 'rb+') as bs:
+        for chunk_id, chunk in enumerate(wad.chunks):
+            chunk_hash, chunk_file = chunk_hashes[chunk_id]
+            with open(chunk_file, 'rb') as f:
                 chunk_data = f.read()
-            chunk.write_data(bs, id, chunk_hashes[id], chunk_data, previous_chunks=wad.chunks[:id])
-            chunk.free_data()
-            print(f'wad_tool: Finish: Pack: {chunk.hash}')
-
+            write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks)

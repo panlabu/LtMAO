@@ -1,21 +1,82 @@
 from io import BytesIO
-from struct import unpack
+from struct import unpack, unpack_from
 
 # not safe because external modules
 try: 
     import pyzstd
-except:
+except ImportError:
     print('Warning: pyRitoFile.manifest failed to import pyzstd.')
 
-class Manifest:
-    __slots__ = ('signature', 'version', 'flags', 'manifest_id', 'body')
+class BundleChunk:
+    __slots__ = ('id', 'compressed_size', 'decompressed_size')
+    
+    def __init__(self, id, compressed_size, decompressed_size):
+        self.id = id
+        self.compressed_size = compressed_size
+        self.decompressed_size = decompressed_size
 
-    def __init__(self, signature, version, flags, manifest_id, body):
+class Bundle:
+    __slots__ = ('id', 'chunks')
+    
+    def __init__(self, id, chunks):
+        self.id = id
+        self.chunks = chunks
+
+class File:
+    __slots__ = ('id', 'parent', 'name', 'chunk_ids')
+    
+    def __init__(self, id, parent, name, chunk_ids):
+        self.id = id
+        self.parent = parent
+        self.name = name
+        self.chunk_ids = chunk_ids
+
+class Directory:
+    __slots__ = ('id', 'parent', 'name')
+    
+    def __init__(self, id, parent, name):
+        self.id = id
+        self.parent = parent
+        self.name = name
+
+class Manifest:
+    __slots__ = ('signature', 'version', 'flags', 'manifest_id', 'bundles', 'files', 'dirs')
+
+    def __init__(self, signature, version, flags, manifest_id, bundles, files, dirs):
         self.signature = signature
         self.version = version
         self.flags = flags
         self.manifest_id = manifest_id
-        self.body = body
+        self.bundles = bundles
+        self.files = files
+        self.dirs = dirs
+
+def get_pointer(buffer, table_offset, vtable_offset):
+    vtable_start = table_offset - unpack_from('<i', buffer, table_offset)[0]
+    vtable_size, = unpack_from('<H', buffer, vtable_start)
+    if vtable_offset < vtable_size:
+        offset = unpack_from('<H', buffer, vtable_start + vtable_offset)[0]
+        if offset != 0:
+            return table_offset + offset
+    return 0
+
+def read_str(buffer, pointer):
+    if not pointer: return None
+    offset = pointer + unpack_from('<I', buffer, pointer)[0]
+    count, = unpack_from('<I', buffer, offset)
+    return buffer[offset+4:offset+4+count].decode('utf-8') if count else ''
+
+def read_u32(buffer, pointer):
+    return unpack_from('<I', buffer, pointer)[0] if pointer else 0
+
+def read_u64(buffer, pointer):
+    return unpack_from('<Q', buffer, pointer)[0] if pointer else 0
+
+def read_u64s(buffer, pointer):
+    if not pointer: return ()
+    offset = pointer + unpack_from('<I', buffer, pointer)[0]
+    count, = unpack_from('<I', buffer, offset)
+    return unpack_from(f'<{count}Q', buffer, offset+4) if count else ()
 
 def read(path):
     stream = BytesIO(path) if isinstance(path, bytes) else open(path, 'rb')
@@ -29,458 +90,77 @@ def read(path):
             raise Exception(f'pyRitoFile: Error: Read MANIFEST {path}: Unsupported file version: {major}.{minor}')
         
         # some numbers
-        flags, body_offset, compressed_size, manifest_id, decompressed_size = unpack('<HIIQI', bs.read(22))
+        flags, buffer_offset, compressed_size, manifest_id, decompressed_size = unpack('<HIIQI', bs.read(22))
 
-        # decompressed body and parse it using flatbuffers generated py
-        bs.seek(body_offset)
-        body_data = pyzstd.decompress(bs.read(compressed_size))
-        body = Body.GetRootAs(body_data, 0)
+        # buffer and root offset
+        bs.seek(buffer_offset)
+        buffer = pyzstd.decompress(bs.read(compressed_size))
+        root_offset, = unpack_from('<I', buffer, 0)
+
+        # bundles
+        bundles = []
+        bundles_pointer = get_pointer(buffer, root_offset, 4)
+        if bundles_pointer:
+            bundles_offset = bundles_pointer + unpack_from('<I', buffer, bundles_pointer)[0]
+            bundle_count, = unpack_from('<I', buffer, bundles_offset)
+            for bundle_index in range(bundle_count):
+                bundle_pointer = bundles_offset + 4 + (bundle_index * 4)
+                bundle_offset = bundle_pointer + unpack_from('<I', buffer, bundle_pointer)[0]
+                bundle_id = read_u64(buffer, get_pointer(buffer, bundle_offset, 4))
+                # bundle chunks
+                chunks = []
+                chunks_pointer = get_pointer(buffer, bundle_offset, 6)
+                if chunks_pointer:
+                    chunks_offset = chunks_pointer + unpack_from('<I', buffer, chunks_pointer)[0]
+                    chunk_count, = unpack_from('<I', buffer, chunks_offset)
+                    for chunk_index in range(chunk_count):
+                        chunk_pointer = chunks_offset + 4 + (chunk_index * 4)
+                        chunk_offset = chunk_pointer + unpack_from('<I', buffer, chunk_pointer)[0]
+                        chunks.append(BundleChunk(
+                            read_u64(buffer, get_pointer(buffer, chunk_offset, 4)),
+                            read_u32(buffer, get_pointer(buffer, chunk_offset, 6)),
+                            read_u32(buffer, get_pointer(buffer, chunk_offset, 8))
+                        ))
+                bundles.append(Bundle(bundle_id, tuple(chunks)))
+
+        # files
+        files = []
+        files_pointer = get_pointer(buffer, root_offset, 8)
+        if files_pointer:
+            files_offset = files_pointer + unpack_from('<I', buffer, files_pointer)[0]
+            file_count, = unpack_from('<I', buffer, files_offset)
+            for file_index in range(file_count):
+                file_pointer = files_offset + 4 + (file_index * 4)
+                file_offset = file_pointer + unpack_from('<I', buffer, file_pointer)[0]
+                files.append(File(
+                    read_u64(buffer, get_pointer(buffer, file_offset, 4)),
+                    read_u64(buffer, get_pointer(buffer, file_offset, 6)),
+                    read_str(buffer, get_pointer(buffer, file_offset, 10)),
+                    read_u64s(buffer, get_pointer(buffer, file_offset, 18))
+                ))
+
+        # dirs 
+        dirs = []
+        dirs_pointer = get_pointer(buffer, root_offset, 10)
+        if dirs_pointer:
+            dirs_offset = dirs_pointer + unpack_from('<I', buffer, dirs_pointer)[0]
+            dir_count, = unpack_from('<I', buffer, dirs_offset)
+            for dir_index in range(dir_count):
+                dir_pointer = dirs_offset + 4 + (dir_index * 4)
+                dir_offset = dir_pointer + unpack_from('<I', buffer, dir_pointer)[0]
+                dirs.append(Directory(
+                    read_u64(buffer, get_pointer(buffer, dir_offset, 4)),
+                    read_u64(buffer, get_pointer(buffer, dir_offset, 6)),
+                    read_str(buffer, get_pointer(buffer, dir_offset, 8))
+                ))
 
     return Manifest(
         signature,
         (major, minor), # version
         flags,
         manifest_id,
-        body
+        bundles,
+        files, 
+        dirs
     )
     
-
-# automatically generated by the FlatBuffers compiler, do not modify
-# this is a cleanup version
-import flatbuffers
-
-class BundleChunk(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = BundleChunk()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Id(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def CompressedSize(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
-
-    def DecompressedSize(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
-
-class Bundle(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = Bundle()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Id(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def Chunks(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = BundleChunk()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def ChunksLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def ChunksIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        return o == 0
-
-class Lang(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = Lang()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Id(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def Name(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.String(o + self._tab.Pos)
-        return None
-
-class File(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = File()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Id(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def DirId(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def Size(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def Name(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            return self._tab.String(o + self._tab.Pos)
-        return None
-
-    def LangFlags(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def Unknown5(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def Unknown6(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(16))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def ChunkIds(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        if o != 0:
-            a = self._tab.Vector(o)
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, a + flatbuffers.number_types.UOffsetTFlags.py_type(j * 8))
-        return 0
-
-    def ChunkIdsAsNumpy(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        if o != 0:
-            return self._tab.GetVectorAsNumpy(flatbuffers.number_types.Uint64Flags, o)
-        return 0
-
-    def ChunkIdsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def ChunkIdsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(18))
-        return o == 0
-
-    def Unknown8(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(20))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def Link(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
-        if o != 0:
-            return self._tab.String(o + self._tab.Pos)
-        return None
-
-    def Unknown10(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(24))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def ChunkParamIndex(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(26))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def Permission(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(28))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-class Dir(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = Dir()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Id(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def Parent(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint64Flags, o + self._tab.Pos)
-        return 0
-
-    def Name(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.String(o + self._tab.Pos)
-        return None
-
-class EncryptKey(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = EncryptKey()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Unknown(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-class ChunkParam(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = ChunkParam()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Id(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint16Flags, o + self._tab.Pos)
-        return 0
-
-    def Version(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Int8Flags, o + self._tab.Pos)
-        return 0
-
-    def MinChunkSize(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
-
-    def MaxChunkSize(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
-
-    def MaxDecompressedSize(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
-        if o != 0:
-            return self._tab.Get(flatbuffers.number_types.Uint32Flags, o + self._tab.Pos)
-        return 0
-
-class Body(object):
-    __slots__ = ['_tab']
-
-    @classmethod
-    def GetRootAs(cls, buf, offset=0):
-        n = flatbuffers.encode.Get(flatbuffers.packer.uoffset, buf, offset)
-        x = Body()
-        x.Init(buf, n + offset)
-        return x
-
-    def Init(self, buf, pos):
-        self._tab = flatbuffers.table.Table(buf, pos)
-
-    def Bundles(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Bundle()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def BundlesLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def BundlesIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(4))
-        return o == 0
-
-    def Langs(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Lang()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def LangsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def LangsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(6))
-        return o == 0
-
-    def Files(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = File()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def FilesLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def FilesIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(8))
-        return o == 0
-
-    def Dirs(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = Dir()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def DirsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def DirsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(10))
-        return o == 0
-
-    def EncryptKeys(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = EncryptKey()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def EncryptKeysLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def EncryptKeysIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(12))
-        return o == 0
-
-    def ChunkParams(self, j):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        if o != 0:
-            x = self._tab.Vector(o)
-            x += flatbuffers.number_types.UOffsetTFlags.py_type(j) * 4
-            x = self._tab.Indirect(x)
-            obj = ChunkParam()
-            obj.Init(self._tab.Bytes, x)
-            return obj
-        return None
-
-    def ChunkParamsLength(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        if o != 0:
-            return self._tab.VectorLen(o)
-        return 0
-
-    def ChunkParamsIsNone(self):
-        o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(14))
-        return o == 0

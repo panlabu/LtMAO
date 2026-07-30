@@ -3207,13 +3207,19 @@ def build_mandown(widget: QWidget):
         # display
         treewidget.clear()
         dir_items = {} 
+        # create flat dirs
         for dir_id in parsed_mandown.dir_dict:
-            dir_item = QTreeWidgetItem(treewidget.invisibleRootItem() if dir_id == 0 else dir_items[parsed_mandown.dir_dict[dir_id][1]])
+            dir_item = QTreeWidgetItem()
+            dir_items[dir_id] = dir_item   
+        # link dirs parent child and create checkbox
+        for dir_id, dir_item in dir_items.items():
+            parent_item = treewidget.invisibleRootItem() if dir_id == 0 else dir_items[parsed_mandown.dir_dict[dir_id][1]]
+            parent_item.addChild(dir_item)
             checkbox = QCheckBox()
             checkbox.setText(f'📁 {parsed_mandown.dir_dict[dir_id][0]} 🆔 {dir_id}')
             checkbox.clicked.connect(lambda checked, root_item=dir_item: checkbox_changed(checked, root_item))
             treewidget.setItemWidget(dir_item, 0, checkbox)
-            dir_items[dir_id] = dir_item
+        # create files
         for file_id in parsed_mandown.file_dict:
             file_item = QTreeWidgetItem(dir_items[parsed_mandown.file_dict[file_id][1]])
             checkbox = QCheckBox()

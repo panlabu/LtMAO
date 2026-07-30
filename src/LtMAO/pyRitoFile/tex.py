@@ -5,7 +5,7 @@ from math import ceil
 format_names = {
     1: 'etc1',
     2: 'etc2_eac',
-    3: 'ect2',
+    3: 'etc2',
     10: 'dxt1',
     12: 'dxt5',
     13: 'bc7',
@@ -40,26 +40,7 @@ def read(path):
             raise Exception(
                 f'pyRitoFile: Error: Read TEX {path}: Wrong file signature: {signature}')
         width, height, format, resource_type,  has_mipmaps = unpack('<2Hx2B?', bs.read(8))
-        # data
-        if has_mipmaps:
-            block_size = 4 if format in {10, 12, 13, 14} else 1
-            if format == 20:
-                bytes_per_block = 4
-            elif format in {10, 21}:
-                bytes_per_block = 8
-            else:
-                bytes_per_block = 16
-            mipmap_count = max(width, height).bit_length()
-            data = [
-                bs.read(
-                    bytes_per_block 
-                    * ceil(max(width >> i, 1) / block_size) 
-                    * ceil(max(height >> i, 1) / block_size)
-                )
-                for i in reversed(range(mipmap_count))
-            ]
-        else:
-            data = [bs.read(-1)]
+        data = bs.read()
 
         return Texture(
             signature, 
@@ -82,5 +63,4 @@ def write(texture, path):
             1, texture.format, texture.resource_type,
             texture.has_mipmaps
         ))
-        for block_data in texture.data:
-            bs.write(block_data)
+        bs.write(texture.data)
