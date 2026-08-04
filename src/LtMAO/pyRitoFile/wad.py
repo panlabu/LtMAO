@@ -105,7 +105,6 @@ def read_data(chunk, bs):
     return chunk_data
 
 def write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks=None):
-    chunk.id = chunk_id
     chunk.hash = chunk_hash
     chunk.compression_type = 0
     chunk.decompressed_size = len(chunk_data)
@@ -147,10 +146,9 @@ def write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks=None
 
 
 class Chunk:
-    __slots__ = ('id', 'hash', '_hash', 'offset', 'compressed_size', 'decompressed_size', 'compression_type', 'duplicated', 'checksum', 'extension')
+    __slots__ = ('hash', '_hash', 'offset', 'compressed_size', 'decompressed_size', 'compression_type', 'duplicated', 'checksum', 'extension')
 
-    def __init__(self, id, hash, _hash, offset, compressed_size, decompressed_size, compression_type, duplicated, checksum, extension):
-        self.id = id
+    def __init__(self, hash, _hash, offset, compressed_size, decompressed_size, compression_type, duplicated, checksum, extension):
         self.hash = hash
         self._hash = _hash
         self.offset = offset
@@ -190,9 +188,7 @@ def read(path):
         chunk_count = int.from_bytes(bs.read(4), 'little')
         chunks = [
             Chunk(
-                chunk_id,
-                hash, 
-                None,
+                hash, None,
                 offset,
                 compressed_size,
                 decompressed_size,
@@ -203,7 +199,7 @@ def read(path):
                 checksum,
                 None
             )
-            for chunk_id, (hash, offset, compressed_size, decompressed_size, type, duplicated, checksum) in enumerate(iter_unpack('<Q3IB?2xQ', bs.read(chunk_count*32)))
+            for hash, offset, compressed_size, decompressed_size, type, duplicated, checksum in iter_unpack('<Q3IB?2xQ', bs.read(chunk_count*32))
         ]
         
     return Archive(
@@ -232,3 +228,71 @@ def write(archive, path=None):
                 chunk.checksum
             ))
         return stream.getvalue() if path is None else None
+
+
+def write_full(chunk_buffers, path=None):
+    stream = BytesIO() if path is None else open(path, 'wb')
+    with stream as bs:
+        # pad header and chunk info
+        chunk_count = len(chunk_buffers)
+        bs.write(pack(f'<{272+chunk_count*32}s', b''))
+        # chunks data
+        chunks = [None] * chunk_count
+        previous_chunks = {}
+        sound_ext = {'bnk', 'wpk'}
+        for chunk_id, (chunk_hash, chunk_path) in enumerate(chunk_buffers):
+            # create chunk
+            if isinstance(chunk_path, bytes):
+                chunk_data = chunk_path
+            else:
+                with open(chunk_path, 'rb') as f:
+                    chunk_data = f.read()
+            compression_type = 0
+            decompressed_size = len(chunk_data)
+            extension = guess_extension(chunk_data[:20])
+            if extension not in sound_ext:
+                chunk_data = pyzstd.compress(chunk_data)
+                compression_type = 3
+            compressed_size = len(chunk_data)
+            checksum = hash_xxh3_64(chunk_data)
+            # check duplicated using previous_chunks: dict
+            key = (checksum, compressed_size, decompressed_size)
+            if key not in previous_chunks:
+                duplicated = False
+                previous_chunks[key] = offset = bs.tell()
+                bs.write(chunk_data)
+            else:
+                # chunk is duped, copy offset
+                duplicated = True
+                offset = previous_chunks[key]
+            # add chunk
+            chunks[chunk_id] = (
+               chunk_hash, 
+               offset, 
+               compressed_size,
+               decompressed_size,
+               compression_type, 
+               duplicated,
+               checksum
+            )
+
+        # header
+        bs.seek(0)
+        bs.write(pack('<2sBB', b'RW', 3, 3))
+        # chunks
+        bs.seek(268)
+        bs.write(pack('<I', chunk_count))
+        for chunk_hash, offset, compressed_size, decompressed_size, compression_type, duplicated, checksum in chunks:
+            bs.write(pack(
+                '<Q3IB?HQ',
+                chunk_hash,
+                offset,
+                compressed_size,
+                decompressed_size,
+                compression_type,
+                duplicated,
+                0, # subchunk
+                checksum
+            ))
+        return stream.getvalue() if path is None else None
+

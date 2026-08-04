@@ -1,5 +1,5 @@
-import os, os.path, json, traceback
-from . import lepath, hash_helper, pyRitoFile
+import os, json, traceback
+from . import hash_helper, pyRitoFile
 
 def unify_path(path):
     # if the path is straight up hex

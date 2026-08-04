@@ -1,6 +1,6 @@
 import os, os.path
 from . import skin, animation, helper
-from ... import lepath, pyRitoFile
+from ... import pyRitoFile
 from fbx import (
     FbxManager, FbxImporter, FbxExporter, FbxIOSettings, FbxScene, FbxNode,
     FbxSkeleton, FbxMesh,

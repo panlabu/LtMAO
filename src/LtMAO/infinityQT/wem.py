@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import QWidget, QLabel, QHBoxLayout, QVBoxLayout, QToolButton, QSlider
 from PySide6.QtCore import Qt
 
-import os.path, wave, pyaudio, threading
-from .. import lepath, tools
+import os, wave, pyaudio, threading
+from .. import tools
 
 infinityQT_dir = './pref/infinityQT'
 

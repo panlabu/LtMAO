@@ -1,5 +1,5 @@
-import os, os.path, shutil
-from . import lepath, tools
+import os, shutil
+from . import tools
 
 wiwawe_dir = './pref/wiwawe'
 wsources_file = f'{wiwawe_dir}/wiwawe.wsources'

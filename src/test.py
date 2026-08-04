@@ -1,11 +1,9 @@
 import cProfile, pstats
-from LtMAO import hash_helper, lepath, pyRitoFile
 
 def test():
-    skn = pyRitoFile.skn.read('D:/durian_petholder.skn')
-    skl = pyRitoFile.skl.read('D:/durian_petholder.skl')
-    for joint in skl.joints:
-        print(joint.name)
+    from LtMAO import wad_tool
+    wad_tool.pack('D:/Lulu.wad', 'D:/a.wad.client')
+    #no_skin.full('D:/Game/DATA/FINAL/Champions', 'D:/')
     
 def db(func):
     with cProfile.Profile() as profile:
@@ -14,4 +12,5 @@ def db(func):
     stats.sort_stats(pstats.SortKey.TIME)
     stats.print_stats(20)
 
-test()
+if __name__ == '__main__':
+    test()

@@ -84,15 +84,18 @@ def unhash(binary, lookup):
     # init
     if binary.flat_fields is None:
         binary.flat_fields = flatten(binary)
-    hashed_types = {17, 18, 132}
+    hash32_types = {17, 132}
+    hash64_type = 18
     list_types = {128, 129}
     embed_types = {130, 131}
     option_type = 133
     map_type = 134
-    target_types = hashed_types | list_types | embed_types | {option_type, map_type}
+    target_types = hash32_types | list_types | embed_types | {hash64_type, option_type, map_type}
     def unhash_data(data_type, data):
-        if data_type in hashed_types:
+        if data_type in hash32_types:
             return lookup(data, f'{data:08x}')
+        if data_type == hash64_type:
+            return lookup(data, f'{data:016x}')
         if data_type in list_types:
             value_type, values = data
             return (value_type, [unhash_data(value_type, value) for value in values])
@@ -184,7 +187,7 @@ def read_vec3(bs): return unpack('<3f', bs.read(12))
 def read_vec4(bs): return unpack('<4f', bs.read(16))
 def read_mtx44(bs): return unpack('<16f', bs.read(64))                          
 def read_rgba(bs): return unpack('<4B', bs.read(4))
-def read_string(bs): return bs.read(int.from_bytes(bs.read(2), 'little')).decode()
+def read_string(bs): return bs.read(int.from_bytes(bs.read(2), 'little')).decode('utf-8')
 def read_hash(bs): return int.from_bytes(bs.read(4), 'little')
 def read_file(bs): return int.from_bytes(bs.read(8), 'little')
 def read_list(bs):
@@ -371,7 +374,7 @@ def write_vec3(data): return pack('<3f', *data)
 def write_vec4(data): return pack('<4f', *data)
 def write_mtx44(data): return pack('<16f', *data)
 def write_rgba(data): return pack('<4B', *data)
-def write_string(data): return pack('<H', len(b:=data.encode())) + b
+def write_string(data): return pack('<H', len(b:=data.encode('utf-8'))) + b
 def write_hash(data): return pack('<I', data)
 def write_file(data): return pack('<Q', data)
 def write_list_list2(data): 
@@ -559,11 +562,11 @@ def dump(binary, pyrf_file):
             value_type, value = data
             res = f'{dump_data(value_type, value, indent, True, False)}'
             if equal:
-                res += f'[{btype_names[value_type]}] = '
+                res = f'[{btype_names[value_type]}] = ' + res
             return res
         elif data_type == map_type:
             key_type, value_type, pairs = data
-            res = [f'[{btype_names[key_type]},{btype_names[value_type]}] = {{' if equal else '{']
+            res = [f'[{btype_names[key_type]}, {btype_names[value_type]}] = {{' if equal else '{']
             if pairs:
                 res.append('\n')
                 res.extend([
@@ -576,14 +579,14 @@ def dump(binary, pyrf_file):
             return ''.join(res)
         else:
             # basic 
-            if data_type == string_type:                                            data = f'"{data}"'
+            if data_type == string_type:                                                        data = repr(data)
             return f'{indents[0 if inline else indent]}{equals[equal]}{data}'
 
-    with open(pyrf_file, 'w') as f:
+    with open(pyrf_file, 'w', encoding='utf-8-sig') as f:
         # header
         f.write(f'signature = {binary.signature}\n')
         # links
-        res = ['links = [']
+        res = ['links: list[string] = [']
         if binary.links:
             res.append('\n')
             res.extend([
@@ -593,7 +596,7 @@ def dump(binary, pyrf_file):
         res.append(']\n')
         f.write(''.join(res))
         # entries
-        res = ['entries = {']
+        res = ['entries: map[hash, embed] = {']
         if binary.entries:
             res.append('\n')
             for entry in binary.entries:
@@ -609,7 +612,20 @@ def dump(binary, pyrf_file):
                     res.append(')')
         res.append('}\n')
         f.write(''.join(res))
-
         # patches
+        if binary.is_patch:
+            res = ['patches: list[embed] = [']
+            if binary.patches:
+                res.append('\n')
+                for patch in binary.patches:
+                    res.extend([
+                        f'{indents[1]}Patch(\n',
+                        f'{indents[2]}path: string = {repr(patch.path)}\n',
+                        f'{indents[2]}{patch._hash}: {btype_names[patch.data_type]}{dump_data(patch.data_type, patch.data, 2, True, True)}\n',
+                        f'{indents[1]})\n'
+                    ])
+            res.append(']\n')
+            f.write(''.join(res))
+
 
 

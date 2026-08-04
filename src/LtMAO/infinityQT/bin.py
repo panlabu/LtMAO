@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QTreeWidget, QTreeWidgetItem
 from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtCore import Qt
 
-from .. import lepath, pyRitoFile, hash_helper
+from .. import pyRitoFile, hash_helper
 
 all_bin_types = pyRitoFile.bin.btype_names.values()
 

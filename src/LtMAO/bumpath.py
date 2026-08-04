@@ -1,5 +1,5 @@
-from LtMAO import lepath, pyRitoFile, hash_helper
-import os, os.path, shutil
+from LtMAO import pyRitoFile, hash_helper
+import os, shutil
 
 def unify_path(path):
     # if the path is straight up hex

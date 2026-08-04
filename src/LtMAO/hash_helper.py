@@ -69,12 +69,12 @@ lookup = hashes.get
 # size related
 def human_size(nbytes):
     if nbytes < 1024:
-        return f"{nbytes} B"  
+        return f'{nbytes} B'
     if nbytes < 1048576:        
-        return f"{f'{nbytes/1024:.2f}'.rstrip('0').rstrip('.')} KB"
+        return f'{nbytes/1024:.2f} KB'
     if nbytes < 1073741824:      
-        return f"{f'{nbytes/1048576:.2f}'.rstrip('0').rstrip('.')} MB"
-    return f"{f'{nbytes/1073741824:.2f}'.rstrip('0').rstrip('.')} GB"
+        return f'{nbytes/1048576:.2f} MB'
+    return f'{nbytes/1073741824:.2f} GB'
 
 def total_size(path): 
     return human_size(sum(map(

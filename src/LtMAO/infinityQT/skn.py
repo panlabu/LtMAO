@@ -3,7 +3,6 @@ from PySide6.QtCore import Qt
 
 import f3d
 import os.path
-from .. import lepath
 from ..lemon3d import lemon_fbx
 
 infinityQT_dir = './pref/infinityQT'

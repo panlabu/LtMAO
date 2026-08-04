@@ -1,9 +1,9 @@
 import os, winreg, subprocess
 
-pythonw_file = r'.\cpy\pythonw.exe'
-python_file = r'.\cpy\python.exe'
-gui_file = r'.\src\gui.py'
-cli_file = r'.\src\cli.py'
+pythonw_file = './cpy/pythonw.exe'
+python_file = './cpy/python.exe'
+gui_file = './src/gui.py'
+cli_file = './src/cli.py'
 
 
 submenus = {

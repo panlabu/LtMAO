@@ -1,6 +1,5 @@
-from . import lepath, tools, pyRitoFile, hash_helper
-
-import os, os.path, time, io, json
+from . import tools, pyRitoFile, hash_helper
+import os, time, io, json
 from natsort_rs import natsort
 from shutil import rmtree
 import pyaudio, wave, audioop

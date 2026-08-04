@@ -44,7 +44,6 @@ from .. import (
     cslmao,
     texsmart,
     wiwawe,
-    lepath,
     bumpath,
     infinityQT,
     mandown
@@ -1066,7 +1065,7 @@ def build_hash_helper(widget: QWidget):
         if len(rs) > 0:
             # read existed 
             hashes = {}
-            filehash = rf'{hash_helper.local_extracted}\hashes.bin{binhash_name.lower()}.txt'
+            filehash = f'{hash_helper.local_extracted}/hashes.bin{binhash_name.lower()}.txt'
             hash_helper.read_hash(hashes, filehash, hash_helper.bsl1, hash_helper.bsl2)
             # add 
             for r, h in zip(rs, hs):
@@ -1108,7 +1107,7 @@ def build_hash_helper(widget: QWidget):
         if len(rs) > 0:
             # read existed 
             hashes = {}
-            filehash = rf'{hash_helper.local_extracted}\hashes.{wadhash_name.lower()}.txt'
+            filehash = f'{hash_helper.local_extracted}/hashes.{wadhash_name.lower()}.txt'
             hash_helper.read_hash(hashes, filehash, hash_helper.wsl1, hash_helper.wsl2)
             # add 
             for r, h in zip(rs, hs):
@@ -3166,17 +3165,29 @@ def build_mandown(widget: QWidget):
     treewidget.setSelectionMode(treewidget.SelectionMode.SingleSelection)
     treewidget.expandAll()
     layout.addWidget(treewidget, stretch=1)
-    treewidget.parsed_mandown = None
+    treewidget.parsed = None
 
     layout4 = QHBoxLayout()
     layout.addLayout(layout4)
     
-    # open cache button
-    cache_button = QToolButton()
-    cache_button.setText('📁 Open cache')
-    cache_button.setMinimumWidth(200)
-    cache_button.clicked.connect(lambda: os.startfile(lepath.abs(mandown.cache_dir)))
-    layout4.addWidget(cache_button)
+    # cache
+    cache_label = QLabel(f'Cache: {mandown.total_size(mandown.cache_dir)}')
+    layout4.addWidget(cache_label)
+    # open button
+    open_button = QToolButton()
+    open_button.setText('📁 Open')
+    open_button.setMinimumWidth(200)
+    open_button.clicked.connect(lambda: os.startfile(os.path.abspath(mandown.cache_dir)))
+    layout4.addWidget(open_button)
+    # clear button
+    clear_button = QToolButton()
+    clear_button.setText('📁 Clear')
+    clear_button.setMinimumWidth(200)
+    def clear_cache():
+        mandown.delete_cache()
+        cache_label.setText(f'Cache: {mandown.total_size(mandown.cache_dir)}')
+    clear_button.clicked.connect(clear_cache)
+    layout4.addWidget(clear_button)
     layout4.addStretch()
     # download button
     download_button = QToolButton()
@@ -3187,14 +3198,14 @@ def build_mandown(widget: QWidget):
     # change region
     def change_region():
         patch_combobox.clear()
-        patch_combobox.addItems(reversed(mandown.loaded[region_combobox.currentText()]))
+        patch_combobox.addItems(sorted(mandown.loaded[region_combobox.currentText()], reverse=True))
     region_combobox.currentTextChanged.connect(change_region)
 
     # parse
     def parse_cmd():
-        # read ma
-        treewidget.parsed_mandown = parsed_mandown = mandown.Mandown(region_combobox.currentText(), patch_combobox.currentText())
-        treewidgetsafe.build_tree(parsed_mandown)
+        # read mandown
+        treewidget.parsed = parsed = mandown.parse(region_combobox.currentText(), patch_combobox.currentText())
+        treewidgetsafe.build_tree(parsed)
 
     def checkbox_changed(checked, root_item):
         for i in range(root_item.childCount()):
@@ -3203,27 +3214,28 @@ def build_mandown(widget: QWidget):
             checkbox_changed(checked, child_item)
 
     # dispay tree
-    def build_tree(parsed_mandown):
+    def build_tree(parsed):
+        file_infos, dir_infos, _ = parsed
         # display
         treewidget.clear()
         dir_items = {} 
         # create flat dirs
-        for dir_id in parsed_mandown.dir_dict:
+        for dir_id in dir_infos:
             dir_item = QTreeWidgetItem()
             dir_items[dir_id] = dir_item   
         # link dirs parent child and create checkbox
         for dir_id, dir_item in dir_items.items():
-            parent_item = treewidget.invisibleRootItem() if dir_id == 0 else dir_items[parsed_mandown.dir_dict[dir_id][1]]
+            parent_item = treewidget.invisibleRootItem() if dir_id == 0 else dir_items[dir_infos[dir_id].parent]
             parent_item.addChild(dir_item)
             checkbox = QCheckBox()
-            checkbox.setText(f'📁 {parsed_mandown.dir_dict[dir_id][0]} 🆔 {dir_id}')
+            checkbox.setText(f'📁 {dir_infos[dir_id].name} 🆔 {dir_id}')
             checkbox.clicked.connect(lambda checked, root_item=dir_item: checkbox_changed(checked, root_item))
             treewidget.setItemWidget(dir_item, 0, checkbox)
         # create files
-        for file_id in parsed_mandown.file_dict:
-            file_item = QTreeWidgetItem(dir_items[parsed_mandown.file_dict[file_id][1]])
+        for file_id in file_infos:
+            file_item = QTreeWidgetItem(dir_items[file_infos[file_id][0].parent])
             checkbox = QCheckBox()
-            checkbox.setText(f'📄 {parsed_mandown.file_dict[file_id][0]} 🆔 {file_id}')
+            checkbox.setText(f'📄 {file_infos[file_id][0].name} 🆔 {file_id}')
             treewidget.setItemWidget(file_item, 0, checkbox)
         treewidget.expandAll()
 
@@ -3231,13 +3243,13 @@ def build_mandown(widget: QWidget):
     class TreeWidgetSafe(QObject):
         signal = Signal(object)
 
-        def __init__(self, treewidget):
+        def __init__(self):
             QObject.__init__(self)
             self.signal.connect(build_tree)
         
-        def build_tree(self, parsed_mandown):
-            self.signal.emit(parsed_mandown)
-    treewidgetsafe = TreeWidgetSafe(treewidget)
+        def build_tree(self, parsed):
+            self.signal.emit(parsed)
+    treewidgetsafe = TreeWidgetSafe()
     parse_button.clicked.connect(lambda: helper.SafeThread.start('mandown', parse_cmd))
 
     # selects
@@ -3262,7 +3274,7 @@ def build_mandown(widget: QWidget):
 
     # download
     def download_files():
-        if treewidget.parsed_mandown == None:
+        if treewidget.parsed is None:
             return
         dialog = QFileDialog()
         output_dir = dialog.getExistingDirectory(
@@ -3282,7 +3294,7 @@ def build_mandown(widget: QWidget):
                         file_ids.append(int(checkbox.text().split(' 🆔 ')[-1]))
                     checked_items(child_item)
             checked_items(treewidget.invisibleRootItem())
-            helper.SafeThread.start('mandown', lambda: treewidget.parsed_mandown.download(file_ids, output_dir))
+            helper.SafeThread.start('mandown', lambda: mandown.download(treewidget.parsed, file_ids, output_dir))
             
     download_button.clicked.connect(download_files)
 

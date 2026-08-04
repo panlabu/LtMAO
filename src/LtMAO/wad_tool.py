@@ -56,11 +56,9 @@ def pack(raw_dir, wad_file):
     # init 
     is_xxh64_hex = pyRitoFile.maths.is_xxh64_hex
     hash_xxh64 = pyRitoFile.maths.hash_xxh64
-    Chunk = pyRitoFile.wad.Chunk
-    write_data = pyRitoFile.wad.write_data
     print(f'wad_tool: Start: Pack WAD: {raw_dir}')
     # chunk hashes = [(hash of rel_file, file to read data later)]
-    chunk_hashes = [
+    chunk_buffers = [
         # if rel_file is hex.ext, convert hex to int 
         (h, f) if (h:=is_xxh64_hex((rf:=os.path.relpath(f, raw_dir)).split('.', 1)[0])) is not None
         # otherwise, hash_xxh64(rel_file)
@@ -71,25 +69,5 @@ def pack(raw_dir, wad_file):
         # filter out hashed_files.json
         if not (f:=os.path.join(root, file)).endswith('hashed_files.json')
     ]
-    # write empty wad
-    wad = pyRitoFile.wad.Archive(
-        None, None, 
-        [
-            Chunk(
-                chunk_id,
-                chunk_hash, None, 
-                0, 0, 0,
-                0, False, 0, None
-            )
-            for chunk_id, (chunk_hash, _) in enumerate(chunk_hashes)
-        ]
-    )
-    pyRitoFile.wad.write(wad, wad_file)
-    # write chunk data
-    previous_chunks = {}
-    with open(wad_file, 'rb+') as bs:
-        for chunk_id, chunk in enumerate(wad.chunks):
-            chunk_hash, chunk_file = chunk_hashes[chunk_id]
-            with open(chunk_file, 'rb') as f:
-                chunk_data = f.read()
-            write_data(chunk, bs, chunk_id, chunk_hash, chunk_data, previous_chunks)
+    # write wad
+    pyRitoFile.wad.write_full(chunk_buffers, wad_file)

@@ -1,4 +1,4 @@
-import sys, os, os.path, argparse
+import sys, os, argparse
 
 
 class CLI:
@@ -109,7 +109,6 @@ class CLI:
     def hashextract(src):
         from LtMAO import lepath, hash_helper
         import os
-        import os.path
         if os.path.isdir(src):
             file_paths = []
             for root, dirs, files in os.walk(src):
@@ -193,32 +192,6 @@ class CLI:
             png=dst,
         )
 
-    @staticmethod
-    def dds2x4x(src):
-        import os
-        import os.path
-        from PIL import Image
-        from LtMAO import lepath, tools
-        with Image.open(src) as img:
-            basename = os.path.basename(src)
-            dirname = os.path.dirname(src)
-            width_2x = img.width // 2
-            height_2x = img.height // 2
-            file_2x = lepath.join(dirname, '2x_'+basename)
-            width_4x = img.width // 4
-            height_4x = img.height // 4
-            file_4x = lepath.join(dirname, '4x_'+basename)
-        print(f'dds2x4x: Start: Create: {file_2x}')
-        tools.ImageMagick.resize_dds(
-            src=src,
-            dst=file_2x, width=width_2x, height=height_2x
-        )
-        print(f'dds2x4x: Start: Create: {file_4x}')
-        tools.ImageMagick.resize_dds(
-            src=src,
-            dst=file_4x, width=width_4x, height=height_4x
-        )
-
     def wem2wav(src):
         from LtMAO import wiwawe
         wiwawe.wem2wav([src])
@@ -265,7 +238,7 @@ class CLI:
         wiwawe.ogg2wem(ogg_files)
 
     def bnk2dir(src, dst):
-        import os, os.path
+        import os
         from LtMAO import bnk_tool, lepath
         if dst == None:
             dst = lepath.ext(src, '.bnk', '')

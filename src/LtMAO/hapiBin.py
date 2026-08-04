@@ -1,5 +1,5 @@
-import os.path, shutil
-from . import lepath, pyRitoFile, hash_helper
+import os, shutil
+from . import pyRitoFile, hash_helper
 
 class Helper:
     qt_datas = [] 

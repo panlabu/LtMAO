@@ -1,7 +1,21 @@
 import os, os.path
+import cProfile, pstats
+
+def db(func):
+    with cProfile.Profile() as pr:
+        func()
+    p = pstats.Stats(pr)
+    p.sort_stats('time').print_stats(10)
 
 # ensure this script always work with ltmao dir
 os.chdir('/storage/emulated/0/ltmao')
+
+# test no skin
+def tns():
+    from LtMAO import no_skin
+    no_skin.full2('.', '.')
+
+tns()
 
 # test uvee
 def tu():
@@ -9,19 +23,20 @@ def tu():
     uvee.uvee('akshan_base_w_geometryburst01.scb')
     uvee.uvee('akshan_base.skn')
 
-tu()
 
 # test mandown
 def tmd():
     from LtMAO import mandown
     mandown.init(None)
     file_infos, chunk_infos = mandown.parse('VN2', '16.15.7987775.txt')
-    for file_id, (file, _) in file_infos.items():
-        if file.name == 'Akshan.wad.client':
-            break
-    mandown.download((file_infos, chunk_infos), [file_id], '.')
+    file_ids = [
+        file_id
+        for file_id, (file, _) in file_infos.items()
+        if file.name in ('Akshan.wad.client', 'Brand.wad.client', 'Fizz.wad.client')
+    ]
+    mandown.download((file_infos, chunk_infos), file_ids, '.')
 
-# test wt
+# test wad_tool
 def twt():
     from LtMAO import hash_helper, wad_tool, pyRitoFile
     hash_helper.read_hashes(False, True)
@@ -30,6 +45,16 @@ def twt():
     fs = [chunk._hash for chunk in wad.chunks if chunk._hash.endswith(('.skn', '.scb'))]
     wad_tool.unpack('Akshan.wad.client', 'Akshan.wad', hash_helper.lookup, fs)
 
+
+# test wad
+def tw():
+    from LtMAO import hash_helper, wad_tool, pyRitoFile
+    hash_helper.read_hashes(False, True)
+    wad = pyRitoFile.wad.read('Akshan.wad.client')
+    pyRitoFile.wad.unhash(wad, hash_helper.lookup)
+    with open('a.txt', 'w') as f:
+        for chunk in wad.chunks:
+            f.write(chunk._hash + '\n')
 
 # hash_helper test
 def thh():
@@ -41,9 +66,12 @@ def thh():
 def tpyrf():
     from LtMAO import pyRitoFile, hash_helper
     hash_helper.read_hashes(True, True)
-    a = pyRitoFile.bin.read('skin0.bin')
+    a = pyRitoFile.bin.read('globals.cdtb.bin')
     pyRitoFile.bin.unhash(a, hash_helper.lookup)
-    pyRitoFile.bin.dump(a, 'skin0.py')
+    db(lambda: pyRitoFile.bin.dump(a, 'globals.py'))
+    b = pyRitoFile.bin.read('uitablet.cdtb.bin')
+    pyRitoFile.bin.unhash(b, hash_helper.lookup)
+    pyRitoFile.bin.dump(b, 'uitablet.py')
 
 # test skl
 def tskl():

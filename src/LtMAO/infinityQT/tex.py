@@ -2,8 +2,8 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QSlider, QGraphicsScene, QGr
 from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtCore import Qt
 
-import os.path
-from .. import lepath, Ritoddstex, tools
+import os
+from .. import Ritoddstex, tools
 
 infinityQT_dir = './pref/infinityQT'
 

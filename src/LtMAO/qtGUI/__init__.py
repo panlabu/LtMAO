@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QApplication 
 from PySide6.QtGui import QFontDatabase, QFont, QBrush, QColor
+import modern_colorthief
 
 def build_app():
     # set app theme
@@ -14,7 +15,7 @@ def build_app():
     stash.init()
 
     # set font
-    id = QFontDatabase.addApplicationFont(r'.\res\font.ttf')
+    id = QFontDatabase.addApplicationFont('./res/font.ttf')
     family = QFontDatabase.applicationFontFamilies(id)[0] if id > -1 else 'Consolas'
     app.setFont(QFont(family, weight=15))
 
@@ -57,15 +58,14 @@ def build_app():
 def init_theme(theme_name):
     # set theme paths
     app.theme_paths = {
-        'splash': rf'.\res\themes\{theme_name}\splash.png',
-        'background': rf'.\res\themes\{theme_name}\background.gif',
-        'titlebaricon': rf'.\res\themes\{theme_name}\titlebaricon.png',
-        'appicon': rf'.\res\themes\{theme_name}\appicon.ico'
+        'splash': f'./res/themes/{theme_name}/splash.png',
+        'background': f'./res/themes/{theme_name}/background.gif',
+        'titlebaricon': f'./res/themes/{theme_name}/titlebaricon.png',
+        'appicon': f'./res/themes/{theme_name}/appicon.ico'
     }
     # get accent color from background image
-    from colorthief import ColorThief
     if '_' in theme_name:
-        colors = ColorThief(app.theme_paths['background']).get_palette(quality=1, color_count=2)
+        colors = modern_colorthief.get_palette(app.theme_paths['background'], quality=1, color_count=2)
         r1, g1, b1 = colors[0]
         f = 255*0.7 / max(r1, g1, b1)
         r1, g1, b1 = (int(r1*f), int(g1*f), int(b1*f))
@@ -75,7 +75,7 @@ def init_theme(theme_name):
         app.accent_color = f'qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0.0 #{r1:02x}{g1:02x}{b1:02x}, stop: 1.0 #{r2:02x}{g2:02x}{b2:02x})'
         app.accent_brush = QBrush(QColor(r1, g1, b1))
     else:
-        r, g, b = ColorThief(app.theme_paths['background']).get_color(quality=1)
+        r, g, b = modern_colorthief.get_color(app.theme_paths['background'], quality=1)
         f = 255*0.7 / max(r, g, b)
         r, g, b = (int(r*f), int(g*f), int(b*f))
         app.accent_color = f'rgb({r}, {g}, {b})'

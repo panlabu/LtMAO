@@ -1,0 +1,2 @@
+[console_scripts]
+modern-colorthief=modern_colorthief.cli:main

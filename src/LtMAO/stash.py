@@ -1,4 +1,4 @@
-import os, os.path, json, traceback
+import os, json, traceback
 
 s = {}
 pref_dir = './pref'

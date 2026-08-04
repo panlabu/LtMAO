@@ -1,5 +1,5 @@
-from . import lepath, pyRitoFile, mask_viewer
-import shutil, os.path
+from . import pyRitoFile, mask_viewer
+import shutil, os
 
 def skin_fix(skl_path, skn_path, riotskl_path, riotskn_path='', backup=True, dont_add_joint_back=False):
     # read skin

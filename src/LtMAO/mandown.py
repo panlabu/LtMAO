@@ -9,6 +9,26 @@ version_file = f'{local_dir}/version'
 
 loaded = {}
 
+# size related
+def human_size(nbytes):
+    if nbytes < 1024:
+        return f'{nbytes} B'
+    if nbytes < 1048576:
+        return f'{nbytes/1024:.2f} KB'
+    if nbytes < 1073741824:
+        return f'{nbytes/1048576:.2f} MB'
+    return f'{nbytes/1073741824:.2f} GB'
+
+def total_size(path):
+    return human_size(sum(map(
+        os.path.getsize,
+        [
+            os.path.join(root, file)
+            for root, dirs, files in os.walk(path)
+            for file in files
+        ]
+    )))
+
 def parse(region, patch):
     session = requests.Session()
     print(f'mandown: Getting info: {region}/{patch}')
@@ -28,14 +48,14 @@ def parse(region, patch):
     print(f'mandown: Parsing: {local_file}')
     manifest = pyRitoFile.manifest.read(local_file)
     # file infos
-    dirs = {dir.id: dir for dir in manifest.dirs}
+    dir_infos = {dir.id: dir for dir in manifest.dirs}
     cached_dirs = {}
     def get_path(item):
         if item.parent == item.id:
             return item.name
         parent_id = item.parent
         if parent_id not in cached_dirs:
-            cached_dirs[parent_id] = get_path(dirs[parent_id])
+            cached_dirs[parent_id] = get_path(dir_infos[parent_id])
         return f'{cached_dirs[parent_id]}/{item.name}'
     file_infos = {file.id: (file, get_path(file).lstrip('/')) for file in manifest.files}
     # chunk infos
@@ -45,12 +65,11 @@ def parse(region, patch):
         for chunk in bundle.chunks:
             chunk_infos[chunk.id] = (chunk, chunk_offset, bundle.id)
             chunk_offset += chunk.compressed_size
-
-    return (file_infos, chunk_infos)
+    return (file_infos, dir_infos, chunk_infos)
 
 def download(parsed, file_ids, output_dir):
     # init
-    file_infos, chunk_infos = parsed
+    file_infos, _, chunk_infos = parsed
     bundles_dir = f'{cache_dir}/bundles'
     os.makedirs(bundles_dir, exist_ok=True)
     decompress = pyzstd.decompress
@@ -90,8 +109,9 @@ def download(parsed, file_ids, output_dir):
                     bf.seek(chunk_offset)
                     lf.write(decompress(bf.read(chunk.compressed_size)))
     print(f'mandown: Fininshed download {len(file_ids)} files at {output_dir}.')
-    # delete cache only if we succed, otherwise we can re use cache again.
-    shutil.rmtree(bundles_dir)
+
+def delete_cache():
+    shutil.rmtree(cache_dir)
 
 def init(region_combobox):
     os.makedirs(local_dir, exist_ok=True)
